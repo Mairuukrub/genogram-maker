@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Genogram Maker — แผนผังเครือญาติ</title>
+<script src="fonts.js"></script>
+<style>
+  :root{--ink:#234e8c;--bg:#f6f1e3;--line:#dcd5c2;--acc:#ff7a00;--mut:#4f6188;--ok:#1f8a4c;--warn:#b26a00;--bad:#c0392b}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:#1f2a44;font-family:Sarabun,'Noto Sans Thai',Tahoma,sans-serif;font-size:14px;display:flex;flex-direction:column}
+  .top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 14px 4px}
+  .tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 14px 8px}
+  .top h1{margin:0 6px 0 0;font-size:18px;color:var(--ink)}
+  .sp{flex:1}
+  button,select,input,textarea{font:inherit}
+  button{padding:6px 11px;border:1px solid var(--ink);background:#fff;color:var(--ink);border-radius:8px;cursor:pointer}
+  button:hover:not(:disabled){background:#eaf1fb}
+  button:disabled{opacity:.4;cursor:default}
+  button.pri{background:var(--ink);color:#fff}
+  button.pri:hover:not(:disabled){background:#1b3f72}
+  button.dng{border-color:var(--bad);color:var(--bad)}
+  button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  select{padding:6px 8px;border:1px solid var(--ink);border-radius:8px;background:#fff;color:var(--ink);max-width:240px}
+  .zl{min-width:48px;text-align:center;color:var(--mut)}
+  .tgl{display:flex;align-items:center;gap:5px;color:var(--mut)}
+  .stat{border-radius:999px;padding:4px 12px;font-size:13px;border-color:var(--ok);color:var(--ok);background:#fff}
+  .stat.warn{border-color:var(--warn);color:var(--warn);background:#fff7e8}
+  .stat.bad{border-color:var(--bad);color:#fff;background:var(--bad)}
+  #nag{display:none;margin:0 14px 8px;padding:8px 12px;background:#fff3d6;border:1px solid #e5b34d;border-radius:10px;color:#6b4500;align-items:center;gap:10px;flex-wrap:wrap}
+  .main{flex:1;min-height:0;display:flex;gap:12px;padding:0 14px 14px}
+  .cvwrap{position:relative;flex:1;min-width:0;background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  #cv{width:100%;height:100%;display:block;touch-action:none;user-select:none;font-family:Sarabun,'Noto Sans Thai',Tahoma,sans-serif}
+  #mq{display:none;position:absolute;border:1.5px dashed var(--acc);background:rgba(255,122,0,.08);pointer-events:none}
+  #modebar{display:none;position:absolute;left:50%;top:12px;transform:translateX(-50%);align-items:center;gap:8px;background:#1f2a44;color:#fff;padding:8px 10px 8px 14px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.2);max-width:92%;flex-wrap:wrap;justify-content:center}
+  #modebar button{padding:4px 10px;font-size:13px}
+  #toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:#1f2a44;color:#fff;padding:8px 14px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:92%;text-align:center;display:flex;gap:10px;align-items:center}
+  #toast.act{pointer-events:auto}
+  #toast button{padding:2px 10px;background:#fff;color:#1f2a44;border-color:#fff}
+  #empty{display:none;position:absolute;inset:0;align-items:center;justify-content:center;text-align:center;pointer-events:none}
+  #empty div{background:rgba(255,255,255,.92);border:1px dashed var(--line);border-radius:14px;padding:18px 24px;max-width:420px;pointer-events:auto;line-height:1.6;color:var(--mut)}
+  #empty b{color:var(--ink);font-size:16px}
+  aside{width:330px;flex:none;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:6px 14px 14px}
+  .sec{padding:10px 0;border-bottom:1px solid #eee}
+  .sec:last-child{border-bottom:0}
+  .st{font-weight:700;color:var(--ink);margin-bottom:6px}
+  .mut{color:var(--mut);margin:0;line-height:1.55}
+  label{display:block;margin:6px 0;color:var(--mut);font-size:13px}
+  label input:not([type=checkbox]):not([type=range]),label select,label textarea,#linktype{display:block;width:100%;margin-top:2px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;color:#1f2a44;background:#fff;max-width:none}
+  #linktype{margin:0 0 8px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .btns{display:flex;flex-wrap:wrap;gap:6px}
+  .chk{display:flex;gap:14px;margin:6px 0;flex-wrap:wrap}
+  .chk label,label.ck{display:flex;gap:5px;align-items:center;margin:4px 0;color:#1f2a44}
+  .sw{display:flex;gap:7px;margin:8px 0}
+  .swb{width:28px;height:28px;padding:0;border-radius:50%}
+  .swb.on{outline:3px solid var(--acc);outline-offset:1px}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+  .chip{padding:3px 9px;font-size:12.5px;border-radius:999px}
+  .chip.on{background:var(--ink);color:#fff}
+  details{border-top:1px solid #eee;padding:8px 0}
+  summary{cursor:pointer;color:var(--ink);font-weight:700}
+  .lg{display:grid;grid-template-columns:1fr 1fr;gap:6px 8px;margin-top:8px}
+  .li{display:flex;align-items:center;gap:6px;font-size:12.5px;color:#1f2a44}
+  .li svg{width:66px;height:44px;flex:none;background:#fafaf6;border-radius:6px}
+  dialog{border:0;border-radius:14px;padding:0;max-width:min(980px,96vw);width:96vw;box-shadow:0 12px 40px rgba(0,0,0,.3);color:#1f2a44}
+  dialog::backdrop{background:rgba(20,30,50,.45)}
+  .dh{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #eee}
+  .dh h2{margin:0;font-size:17px;color:var(--ink)}
+  .db{padding:14px 18px;max-height:78vh;overflow:auto}
+  .grid2{display:grid;grid-template-columns:300px 1fr;gap:18px}
+  .pv{background:#fafaf6;border:1px solid var(--line);border-radius:10px;padding:8px;min-height:240px;display:flex;align-items:flex-start;justify-content:center;overflow:auto}
+  .pv svg{max-width:100%;height:auto}
+  .note{font-size:12.5px;color:var(--mut);line-height:1.55}
+  .warnbox{background:#fff3d6;border:1px solid #e5b34d;border-radius:8px;padding:6px 10px;color:#6b4500;font-size:13px;margin:6px 0}
+  .okbox{background:#e8f6ee;border:1px solid #8fcfa9;border-radius:8px;padding:6px 10px;color:#14633a;font-size:13px;margin:6px 0}
+  .list{border:1px solid var(--line);border-radius:10px;max-height:190px;overflow:auto}
+  .list .r{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid #f0ece0}
+  .list .r:last-child{border-bottom:0}
+  .list .r span{flex:1}
+  textarea.io{width:100%;height:80px;margin:6px 0;font:12px/1.4 ui-monospace,Menlo,monospace;border:1px solid var(--line);border-radius:8px;padding:6px}
+  #printArea{display:none}
+  @media(max-width:860px){.main{flex-direction:column}.cvwrap{min-height:56vh}aside{width:auto}.grid2{grid-template-columns:1fr}}
+  @media print{
+    body>*:not(#printArea){display:none!important}
+    #printArea{display:block!important}
+    html,body{height:auto;background:#fff}
+  }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Genogram Maker</h1>
+  <select id="famSel" title="เลือกครอบครัว"></select>
+  <button id="famNew">+ ครอบครัวใหม่</button>
+  <button id="famDup" title="ทำสำเนาผังนี้">สำเนา</button>
+  <button id="famDel" class="dng" title="ย้ายผังนี้ไปถังขยะ (กู้คืนได้)">ลบ</button>
+  <span class="sp"></span>
+  <button id="stat" class="stat" title="สถานะการบันทึก — กดเพื่อสำรอง/กู้คืน">กำลังเริ่ม…</button>
+  <button id="bk">สำรอง / กู้คืน</button>
+  <button id="exp" class="pri">ส่งออก / พิมพ์</button>
+  <button id="help" title="วิธีใช้">?</button>
+</div>
+<div class="tools">
+  <button id="undo" disabled>↶ ย้อนกลับ</button><button id="redo" disabled>↷ ทำซ้ำ</button>
+  <button id="zo">−</button><span class="zl" id="zl">100%</span><button id="zi">+</button><button id="zf">พอดีจอ</button>
+  <select id="reltool" title="เลือกประเภทเส้น แล้วคลิกคนแรกและคนที่สองบนผัง"></select>
+  <button id="selmode" title="โหมดเลือกหลายคน: ลากกรอบบนพื้นที่ว่าง หรือแตะทีละคน (ใช้ Shift ค้างบนคอมได้)">☐ เลือกหลายคน</button>
+  <label class="tgl"><input type="checkbox" id="branch"> ลากทั้งกิ่ง</label>
+  <select id="tidy" title="จัดวางอัตโนมัติ"><option value="">⚙ จัดวาง…</option><option value="rows">จัดแต่ละรุ่นให้อยู่แถวเดียวกัน</option><option value="overlap">แก้คนที่ซ้อนกัน/ชิดเกินไป</option><option value="both">ทำทั้งสองอย่าง</option></select>
+</div>
+<div id="nag"></div>
+<div class="main">
+  <div class="cvwrap"><svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg><div id="mq"></div><div id="modebar"></div>
+    <div id="empty"><div><b>ผังนี้ยังว่างอยู่</b><br>กด “+ ชาย / + หญิง” ทางขวาเพื่อเริ่ม แล้วใช้ปุ่ม “+ คู่สมรส / ลูก / พ่อแม่” ต่อได้เลย ไม่ต้องลากเส้นเอง<br><button id="loadSample" style="margin-top:8px">ดูผังตัวอย่าง (ข้อมูลสมมติ)</button></div></div>
+    <div id="toast"></div></div>
+  <aside id="pn"><div id="dyn"></div>
+    <details><summary>สัญลักษณ์ทั้งหมด</summary><div id="legend"></div></details>
+  </aside>
+</div>
+
+<!-- export -->
+<dialog id="dExp"><div class="dh"><h2>ส่งออก / พิมพ์ลงเล่มรายงาน</h2><button data-close>ปิด</button></div>
+<div class="db"><div class="grid2"><div id="expOpts"></div><div><div class="pv" id="expPv"></div><div id="expInfo" class="note" style="margin-top:8px"></div></div></div></div></dialog>
+
+<!-- backup -->
+<dialog id="dBk"><div class="dh"><h2>สำรอง / กู้คืนข้อมูล</h2><button data-close>ปิด</button></div><div class="db" id="bkBody"></div></dialog>
+
+<!-- help -->
+<dialog id="dHelp"><div class="dh"><h2>วิธีใช้</h2><button data-close>ปิด</button></div><div class="db" id="helpBody"></div></dialog>
+
+<div id="printArea"></div>
+<script src="engine.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
