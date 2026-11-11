@@ -57,6 +57,11 @@
   .sw{display:flex;gap:7px;margin:8px 0}
   .swb{width:28px;height:28px;padding:0;border-radius:50%}
   .swb.on{outline:3px solid var(--acc);outline-offset:1px}
+  .tcs{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;margin:6px 0}
+  .tc{display:flex;align-items:center;gap:6px;margin:0;color:#1f2a44;font-size:12.5px}
+  .tc input[type=color]{width:30px;height:24px;padding:0;border:1px solid var(--line);border-radius:4px;flex:none}
+  .tsw{flex-wrap:wrap;gap:6px}
+  .tsw .swb{width:22px;height:22px}
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
   .chip{padding:3px 9px;font-size:12.5px;border-radius:999px}
   .chip.on{background:var(--ink);color:#fff}
@@ -108,6 +113,7 @@
   <button id="zo">−</button><span class="zl" id="zl">100%</span><button id="zi">+</button><button id="zf">พอดีจอ</button>
   <select id="reltool" title="เลือกประเภทเส้น แล้วคลิกคนแรกและคนที่สองบนผัง"></select>
   <button id="selmode" title="โหมดเลือกหลายคน: ลากกรอบบนพื้นที่ว่าง หรือแตะทีละคน (ใช้ Shift ค้างบนคอมได้)">☐ เลือกหลายคน</button>
+  <button id="addText" title="เพิ่มกล่องข้อความอิสระ (ลากย้าย เปลี่ยนสีได้)">＋ ข้อความ</button>
   <label class="tgl"><input type="checkbox" id="branch"> ลากทั้งกิ่ง</label>
   <select id="tidy" title="จัดวางอัตโนมัติ"><option value="">⚙ จัดวาง…</option><option value="rows">จัดแต่ละรุ่นให้อยู่แถวเดียวกัน</option><option value="overlap">แก้คนที่ซ้อนกัน/ชิดเกินไป</option><option value="both">ทำทั้งสองอย่าง</option></select>
 </div>

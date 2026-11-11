@@ -25,12 +25,12 @@ var undoMap = {}, redoMap = {}, undoS = [], redoS = [];
 var sel = null, msel = {}, mode = null, selMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
 var svg, panel, ctr = 0;
 
-function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [] }; }
+function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [] }; }
 function newFam(title) {
-  return { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title || '', house: '', place: '', interviewer: '', date: '', alias: false, showNote: true, condText: true, gen: true, cx: {}, exp: {}, state: newState(), created: Date.now(), updated: Date.now() };
+  return { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title || '', house: '', place: '', interviewer: '', date: '', alias: false, showNote: true, condText: true, gen: true, typed: false, tcol: {}, pstyle: 'both', adopt: 'caption', hhs: 'ellipse', hhc: '', cx: {}, exp: {}, state: newState(), created: Date.now(), updated: Date.now() };
 }
 function normalize(s) {
-  s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.v = 2;
+  s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.texts = s.texts || []; s.v = 2;
   s.persons.forEach(function (p) {
     p.x = +p.x || 0; p.y = +p.y || 0; p.sex = p.sex || 'U';
     var a = String(p.age == null ? '' : p.age).trim();
@@ -46,12 +46,12 @@ function normFam(f) {
 function liveFams() { return project.families.filter(function (f) { return !f.deleted; }); }
 function ctxFor(f, over) {
   var y = f.date ? parseInt(f.date.slice(0, 4), 10) : NaN; if (isNaN(y)) y = new Date().getFullYear();
-  var o = { alias: !!f.alias, showNote: f.showNote !== false, condText: f.condText !== false, gen: f.gen !== false, refYear: y + 543, cm: GE.condMapFor(f) };
+  var o = { alias: !!f.alias, showNote: f.showNote !== false, condText: f.condText !== false, gen: f.gen !== false, refYear: y + 543, cm: GE.condMapFor(f), typed: !!f.typed, tcol: f.tcol || {}, pstyle: f.pstyle || 'both', adopt: f.adopt || 'caption', hhs: f.hhs || 'ellipse', hhc: f.hhc || '' };
   for (var k in over || {}) o[k] = over[k];
   return o;
 }
 function ixOf(st) { return GE.ixOf(st || state); }
-function exists(id) { return state.persons.some(function (p) { return p.id === id; }) || state.unions.some(function (p) { return p.id === id; }) || state.rels.some(function (p) { return p.id === id; }) || state.homes.some(function (p) { return p.id === id; }); }
+function exists(id) { return state.persons.some(function (p) { return p.id === id; }) || state.unions.some(function (p) { return p.id === id; }) || state.rels.some(function (p) { return p.id === id; }) || state.homes.some(function (p) { return p.id === id; }) || state.texts.some(function (p) { return p.id === id; }); }
 function newId(pre) { var id; do { id = pre + (++ctr); } while (exists(id)); return id; }
 function famLabel(f) { return (f.title || 'ครอบครัว (ยังไม่ตั้งชื่อ)') + (f.house ? ' · บ้าน ' + f.house : ''); }
 
@@ -143,7 +143,7 @@ function redo() { if (!redoS.length) return; undoS.push(snapStr()); state = fam.
 function updUR() { var u = $('#undo'), r = $('#redo'); if (u) u.disabled = !undoS.length; if (r) r.disabled = !redoS.length; }
 function findSel() {
   if (!sel) return null;
-  var list = sel.k === 'p' ? state.persons : sel.k === 'u' ? state.unions : sel.k === 'r' ? state.rels : state.homes;
+  var list = sel.k === 'p' ? state.persons : sel.k === 'u' ? state.unions : sel.k === 'r' ? state.rels : sel.k === 't' ? state.texts : state.homes;
   return list.filter(function (o) { return o.id === sel.id; })[0] || null;
 }
 function afterLoad() { if (sel && !findSel()) sel = null; var ids = ixOf(); for (var k in msel) if (!ids[k]) delete msel[k]; mode = null; draw(); renderPanel(); save(); updUR(); }
@@ -169,6 +169,11 @@ function draw() {
 function select(s) { sel = s; if (s) msel = {}; renderPanel(); draw(); }
 
 /* ================= editing ================= */
+function addTextBox() {
+  var c = svgCenter(); pushSnap(); var t = { id: newId('t'), x: c.x, y: c.y, t: 'ข้อความ', s: 16, c: '#1f2a44', a: 'middle' };
+  state.texts.push(t); sel = { k: 't', id: t.id }; msel = {}; renderPanel(); draw(); save();
+  setTimeout(function () { var i = $('[data-f="t"]', panel); if (i) { i.focus(); i.select(); } }, 30);
+}
 function svgCenter() { return { x: Math.round((view.x + view.w / 2) / 10) * 10, y: Math.round((view.y + view.h / 2) / 10) * 10 }; }
 function overlap(x, y) { return state.persons.some(function (p) { return Math.abs(p.x - x) < 78 && Math.abs(p.y - y) < 70; }); }
 function freeSpot(x, y) { var n = 0; while (overlap(x, y) && n < 40) { x += 100; n++; } return x; }
@@ -232,6 +237,7 @@ function doDelete() {
   if (s.k === 'p') { orph = orphansOf(s.id); label = 'ลบแล้ว'; delPerson(s.id); }
   else if (s.k === 'u') { delUnion(s.id); label = 'ลบเส้นคู่ชีวิตแล้ว'; }
   else if (s.k === 'r') { state.rels = state.rels.filter(function (r) { return r.id !== s.id; }); label = 'ลบเส้นแล้ว'; }
+  else if (s.k === 't') { state.texts = state.texts.filter(function (t) { return t.id !== s.id; }); label = 'ลบข้อความแล้ว'; }
   else { state.homes = state.homes.filter(function (h) { return h.id !== s.id; }); label = 'ลบวงบ้านแล้ว'; }
   sel = null; renderPanel(); draw(); save();
   toast(label + (orph ? ' — ลูก ' + orph + ' คนหลุดจากพ่อแม่ (เส้นถูกตัด)' : ''), 'ย้อนกลับ', undo);
@@ -312,6 +318,13 @@ function famPanel() {
     '<label class="ck"><input type="checkbox" data-fm="gen"' + (fam.gen !== false ? ' checked' : '') + '> ป้ายรุ่น I, II, III</label>' +
     '<label class="ck"><input type="checkbox" data-fm="condText"' + (fam.condText !== false ? ' checked' : '') + '> ตัวย่อโรคใต้ชื่อ</label>' +
     '<label class="ck"><input type="checkbox" data-fm="showNote"' + (fam.showNote !== false ? ' checked' : '') + '> หมายเหตุใต้ชื่อ</label></div>' +
+    '<div class="sec"><div class="st">รูปแบบสัญลักษณ์</div>' +
+    '<label>ผู้ป่วย<select data-fm="pstyle">' + opt('both', 'ซ้อนสองชั้น + ลูกศร', fam.pstyle || 'both') + opt('double', 'ซ้อนสองชั้น (ไม่มีลูกศร — ใช้ลูกศรแทนผู้ให้ข้อมูล)', fam.pstyle) + '</select></label>' +
+    '<label>ลูกบุญธรรม<select data-fm="adopt">' + opt('caption', 'ป้าย “บุตรบุญธรรม (adopted)” ตามคู่มือ', fam.adopt || 'caption') + opt('bracket', 'วงเล็บครอบ (แบบสากล)', fam.adopt) + '</select></label>' +
+    '<label>กรอบสมาชิกบ้านเดียวกัน<select data-fm="hhs">' + opt('ellipse', 'วงรี (ตามคู่มือ)', fam.hhs || 'ellipse') + opt('round', 'กล่องมุมมน (แบบเขต 7, 9)', fam.hhs) + '</select></label>' +
+    '<label>สีกรอบ <input type="color" data-fm="hhc" value="' + (fam.hhc || '#234e8c') + '" style="width:44px;height:28px;padding:0;display:inline-block;vertical-align:middle"> <button type="button" data-act="hhcclear" style="padding:2px 8px;font-size:12px">ค่าเดิม</button></label></div>' +
+    '<div class="sec"><div class="st">สีข้อความ</div><label class="ck"><input type="checkbox" data-fm="typed"' + (fam.typed ? ' checked' : '') + '> แยกสีตามชนิดข้อมูล (แบบเขต 7)</label>' +
+    (fam.typed ? '<div class="tcs">' + GE.TEXT_KINDS.map(function (t) { return '<label class="tc"><input type="color" data-tc="' + t.k + '" value="' + ((fam.tcol || {})[t.k] || t.c) + '"> ' + esc(t.n) + '</label>'; }).join('') + '<button type="button" data-act="tcreset" style="padding:2px 8px;font-size:12px">คืนสีมาตรฐาน</button></div>' : '<p class="mut" style="font-size:12px">เปิดแล้ว ชื่อ/อาชีพ/โรค/พฤติกรรมเสี่ยง/สาเหตุการตายจะคนละสี และมีคำอธิบายสีในรูปที่ส่งออก</p>') + '</div>' +
     addBtns() +
     '<div class="sec"><div class="st">โรค/ภาวะที่ตั้งชื่อเองได้</div><p class="mut" style="margin-bottom:6px">ใช้ติดป้ายให้คนในผัง (เช่น โรคที่ไม่มีในรายการ)</p>' +
     ['x1', 'x2'].map(function (k) { return '<div class="two"><label>ตัวย่อ<input data-cx="' + k + '.t" value="' + esc((fam.cx[k] || {}).t || '') + '" placeholder="' + esc(cm[k].t) + '"></label><label>ชื่อเต็ม<input data-cx="' + k + '.n" value="' + esc((fam.cx[k] || {}).n || '') + '" placeholder="' + esc(cm[k].n) + '"></label></div>'; }).join('') + '</div>' +
@@ -342,16 +355,35 @@ function renderPanel() {
       '<label>สถานะ<select data-f="st">' + Object.keys(GE.STS).map(function (k) { return opt(k, GE.STS[k], p.st || ''); }).join('') + '</select></label></div>' +
       '<div class="chk"><label><input type="checkbox" data-f="dead"' + (dead ? ' checked' : '') + '> เสียชีวิต</label><label><input type="checkbox" data-f="adopted"' + (p.adopted ? ' checked' : '') + '> ลูกบุญธรรม</label></div>' +
       (dead ? '<label>สาเหตุการเสียชีวิต<input data-f="cod" value="' + esc(p.cod || '') + '" placeholder="เช่น โรคหัวใจ อุบัติเหตุ ชราภาพ"></label>' : '') + '</div>' +
+      '<div class="sec"><div class="st">ข้อมูลเพิ่มเติม</div>' +
+      '<div class="two"><label>ระดับการศึกษา<input data-f="edu" value="' + esc(p.edu || '') + '" placeholder="เช่น ป.6, ปริญญาตรี"></label><label>อาชีพ<input data-f="occ" value="' + esc(p.occ || '') + '" placeholder="เช่น เกษตรกร"></label></div>' +
+      '<div class="two"><label>บทบาทในชุมชน<input data-f="role" value="' + esc(p.role || '') + '" placeholder="เช่น อสม."></label><label>ย้ายถิ่น / ที่อยู่ปัจจุบัน<input data-f="mig" value="' + esc(p.mig || '') + '" placeholder="เช่น กรุงเทพฯ"></label></div>' +
+      '<label>พฤติกรรมเสี่ยง<input data-f="risk" value="' + esc(p.risk || '') + '" placeholder="เช่น ไม่ออกกำลังกาย กินเค็ม"></label>' +
+      '<div class="chk"><label><input type="checkbox" data-f="inf"' + (p.inf ? ' checked' : '') + '> ผู้ให้ข้อมูล (ลูกศรชี้)</label><label><input type="checkbox" data-f="key"' + (p.key ? ' checked' : '') + '> ผู้ให้ข้อมูลหลัก (ระบายเหลือง)</label></div></div>' +
       '<div class="sec"><div class="st">โรค / ภาวะสุขภาพ</div><div class="chips">' + Object.keys(cm).map(function (k) { var on = (p.cond || []).indexOf(k) >= 0; return '<button class="chip' + (on ? ' on' : '') + '" data-act="cond" data-v="' + k + '" title="' + esc(cm[k].n) + '">' + esc(cm[k].t) + '</button>'; }).join('') + '</div>' +
       ((p.cond || []).length > 3 ? '<p class="mut" style="color:#b26a00">แสดงบนสัญลักษณ์ได้ 3 อย่างแรก (ที่เหลือยังขึ้นเป็นตัวหนังสือ)</p>' : '<p class="mut" style="font-size:12px">แต่ละโรคจะเป็นลายระบายในสัญลักษณ์ (พิมพ์ขาวดำก็แยกได้)</p>') + '</div>' +
-      '<div class="sec"><label>หมายเหตุ<textarea data-f="note" rows="2" placeholder="อาชีพ ฯลฯ">' + esc(p.note || '') + '</textarea></label>' +
+      '<div class="sec"><label>หมายเหตุ<textarea data-f="note" rows="2" placeholder="ข้อความเพิ่มเติมใต้ชื่อ">' + esc(p.note || '') + '</textarea></label>' +
       '<div class="sw">' + GE.FILLS.map(function (c, i) { return '<button class="swb' + ((p.c || 0) === i ? ' on' : '') + '" data-act="color" data-v="' + i + '" title="' + GE.FILL_NAMES[i] + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
       '<label>ตำแหน่งชื่อ<select data-f="lp">' + opt('', 'อัตโนมัติ', p.lp || '') + opt('b', 'ใต้สัญลักษณ์', p.lp) + opt('t', 'เหนือสัญลักษณ์', p.lp) + opt('l', 'ซ้าย', p.lp) + opt('r', 'ขวา', p.lp) + '</select></label></div>' +
+      '<div class="sec"><div class="st">ข้อความของคนนี้</div><p class="mut" style="font-size:12px;margin-bottom:6px">ลากข้อความบนผังเพื่อย้ายได้เลย</p>' +
+      '<div class="two"><label>ขนาด<select data-f="ls">' + opt('', 'ปกติ', p.ls || '') + opt('0.8', 'เล็ก', p.ls) + opt('1.25', 'ใหญ่', p.ls) + opt('1.5', 'ใหญ่มาก', p.ls) + '</select></label><label>สี<input type="color" data-f="lc" value="' + (p.lc || '#234e8c') + '" style="height:32px;padding:2px"></label></div>' +
+      '<div class="sw tsw">' + TCOLS.map(function (c) { return '<button class="swb" data-act="lcol" data-v="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
+      '<div class="chk"><label><input type="checkbox" data-f="lh"' + (p.lh ? ' checked' : '') + '> ซ่อนข้อความของคนนี้</label></div>' +
+      '<div class="btns"><button data-act="lcclear">ล้างสี</button><button data-act="lreset"' + (p.lo ? '' : ' disabled') + '>คืนตำแหน่งข้อความ</button></div></div>' +
       '<div class="sec"><div class="st">เพิ่มญาติ</div><div class="btns">' +
       '<button data-act="spouse">+ คู่สมรส</button><button data-act="child" data-v="M">+ ลูกชาย</button><button data-act="child" data-v="F">+ ลูกหญิง</button>' +
       '<button data-act="parents"' + (p.from ? ' disabled' : '') + '>+ พ่อแม่</button><button data-act="sib" data-v="M">+ พี่น้องชาย</button><button data-act="sib" data-v="F">+ พี่น้องหญิง</button></div></div>' +
       '<div class="sec"><div class="st">เชื่อมกับคนอื่น</div><select id="linktype" style="width:100%;max-width:none">' + linkOptions() + '</select><div class="btns"><button class="pri" data-act="link">เลือกคนที่จะเชื่อม</button>' + (p.tw ? '<button data-act="untwin">ยกเลิกแฝด</button>' : '') + '</div></div>' +
       '<div class="sec"><button class="dng" data-act="del">ลบคนนี้</button></div>';
+  } else if (sel.k === 't') {
+    var tx = s;
+    h += '<div class="sec"><div class="st">กล่องข้อความ</div>' +
+      '<label>ข้อความ (ขึ้นบรรทัดใหม่ได้)<textarea data-f="t" rows="3">' + esc(tx.t || '') + '</textarea></label>' +
+      '<div class="two"><label>ขนาด (px)<input type="number" data-f="s" min="8" max="72" value="' + (tx.s || 15) + '"></label><label>จัดชิด<select data-f="a">' + opt('middle', 'กึ่งกลาง', tx.a || 'middle') + opt('start', 'ซ้าย', tx.a) + opt('end', 'ขวา', tx.a) + '</select></label></div>' +
+      '<div class="two"><label>สี<input type="color" data-f="c" value="' + (tx.c || '#1f2a44') + '" style="height:32px;padding:2px"></label><label class="ck" style="margin-top:22px"><input type="checkbox" data-f="b"' + (tx.b ? ' checked' : '') + '> ตัวหนา</label></div>' +
+      '<div class="sw tsw">' + TCOLS.map(function (c) { return '<button class="swb" data-act="lcol" data-v="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
+      '<p class="mut" style="font-size:12px">ลากข้อความบนผังเพื่อย้าย · ดับเบิลคลิกเพื่อแก้</p></div>' +
+      '<div class="sec"><button class="dng" data-act="del">ลบกล่องข้อความ</button></div>';
   } else if (sel.k === 'u') {
     var u = s;
     h += '<div class="sec"><div class="st">เส้นคู่ชีวิต</div><label>ประเภท<select data-f="t">' + Object.keys(GE.UT).map(function (k) { return opt(k, GE.UT[k], u.t); }).join('') + '</select></label>' +
@@ -367,9 +399,11 @@ function renderPanel() {
     h += '<div class="sec"><div class="st">วงสมาชิกที่อยู่ด้วยกัน</div><button class="dng" data-act="del">ลบวงนี้</button></div>';
   }
   panel.querySelector('#dyn').innerHTML = h; renderMode();
-  var lg = $('#legend'); if (lg && !lg.dataset.k) { lg.innerHTML = GE.legendHTML({ persons: [], unions: [], rels: [], homes: [] }, { cm: cm }); lg.dataset.k = 1; }
+  refreshLegend();
 }
 
+var TCOLS = ['#1f2a44', '#234e8c', '#2447d6', '#e11d1d', '#8b5a2b', '#1f8a3a', '#7c3aed', '#ea580c', '#6b7280'];
+function refreshLegend(force) { var lg = $('#legend'); if (!lg || (lg.dataset.k && !force)) return; lg.innerHTML = GE.legendHTML({ persons: [], unions: [], rels: [], homes: [] }, ctxFor(fam)); lg.dataset.k = 1; }
 var fieldSnap = null, fieldPushed = false;
 function bindPanel() {
   panel.addEventListener('focusin', function (e) { if (e.target.matches('[data-f]')) { fieldSnap = snapStr(); fieldPushed = false; } });
@@ -379,8 +413,9 @@ function bindPanel() {
     if (t.matches('[data-fm]')) {
       var k = t.getAttribute('data-fm'); fam[k] = t.type === 'checkbox' ? t.checked : t.value;
       if (k === 'title' || k === 'house') fillFamSel();
-      draw(); save(); return;
+      refreshLegend(true); draw(); save(); if (k === 'typed') renderPanel(); return;
     }
+    if (t.matches('[data-tc]')) { fam.tcol = fam.tcol || {}; fam.tcol[t.getAttribute('data-tc')] = t.value; refreshLegend(true); draw(); save(); return; }
     if (t.matches('[data-cx]')) {
       var pr = t.getAttribute('data-cx').split('.'); fam.cx = fam.cx || {}; fam.cx[pr[0]] = fam.cx[pr[0]] || {}; fam.cx[pr[0]][pr[1]] = t.value;
       $('#legend').dataset.k = ''; draw(); save(); return;
@@ -389,16 +424,17 @@ function bindPanel() {
     var s = findSel(); if (!s) return;
     if (!fieldPushed) { pushSnap(fieldSnap || snapStr()); fieldPushed = true; }
     var f = t.getAttribute('data-f'), v = t.type === 'checkbox' ? t.checked : t.value;
-    if (f === 'dp') v = +v;
+    if (f === 'dp' || f === 's') v = +v;
+    if (f === 'ls') v = v === '' ? '' : +v;
     if (f === 'byr') { v = String(v).replace(/\D/g, '').slice(0, 4); if (v !== t.value) t.value = v; if (v !== '') v = +v; }
     if (f === 'age' && /^\d{4}$/.test(String(v)) && +v >= 1800) { /* typed a birth year in the age box: move it */
       s.byr = +v > 2300 ? +v : +v + 543; delete s.age; draw(); save(); renderPanel(); toast('เป็นปีเกิด ย้ายไปช่อง “ปีเกิด” ให้แล้ว (อายุจะคำนวณเอง)');
       var bi = $('[data-f="byr"]', panel); if (bi) bi.focus(); return;
     }
-    if (v === '' || v === false) { if (f !== 'name' && f !== 'note') { delete s[f]; v = undefined; } }
+    if (v === '' || v === false) { if (f !== 'name' && f !== 'note' && f !== 't') { delete s[f]; v = undefined; } }
     if (v !== undefined) s[f] = v;
     draw(); save();
-    if (e.type === 'change' && (f === 't' || f === 'sex' || f === 'st' || f === 'dead')) renderPanel();
+    if (e.type === 'change' && (f === 'sex' || f === 'st' || f === 'dead' || (f === 't' && sel && sel.k !== 't') || f === 'lh')) renderPanel();
   }
   panel.addEventListener('input', onField); panel.addEventListener('change', onField);
   panel.addEventListener('click', onAct); $('#modebar').addEventListener('click', onAct); $('#nag').addEventListener('click', onAct);
@@ -414,6 +450,12 @@ function onAct(e) {
   else if (act === 'cancel') { mode = null; }
   else if (act === 'color' && s) { pushSnap(); s.c = +v; }
   else if (act === 'cond' && s) { pushSnap(); var a = s.cond || []; var i = a.indexOf(v); if (i >= 0) a.splice(i, 1); else a.push(v); if (a.length) s.cond = a; else delete s.cond; }
+  else if (act === 'addtext') { addTextBox(); return; }
+  else if (act === 'lcol' && s) { pushSnap(); if (sel.k === 't') s.c = v; else s.lc = v; }
+  else if (act === 'lcclear' && s) { pushSnap(); delete s.lc; }
+  else if (act === 'lreset' && s) { pushSnap(); delete s.lo; }
+  else if (act === 'hhcclear') { fam.hhc = ''; refreshLegend(true); }
+  else if (act === 'tcreset') { fam.tcol = {}; refreshLegend(true); }
   else if (act === 'autoalias' && s) { pushSnap(); s.alias = GE.autoAlias(s.name); }
   else if (act === 'spouse' && s) { pushSnap(); addSpouse(s); }
   else if (act === 'child' && s) { pushSnap(); c = addChildOf(s, v); sel = { k: 'p', id: c.id }; }
@@ -449,7 +491,7 @@ function bindCanvas() {
       pinch = { d0: dist(a, b) || 1, w0: view.w, v0: { x: view.x, y: view.y }, c: pt({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 }) }; drag = null; hideMq(); return;
     }
     if (e.button > 0) return;
-    var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-bh]'), q = pt(e);
+    var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
     if (mode) {
       if (tg && tg.getAttribute('data-pid')) {
         var id = tg.getAttribute('data-pid');
@@ -459,6 +501,15 @@ function bindCanvas() {
       return;
     }
     if (tg && tg.getAttribute('data-bh')) { drag = { k: 'bend', id: tg.getAttribute('data-bh'), snap: snapStr(), moved: false }; }
+    else if (tg && tg.getAttribute('data-lid')) {
+      var lid = tg.getAttribute('data-lid'), lp_ = ixOf()[lid]; if (!lp_) return;
+      if (e.shiftKey || selMode) { msel[lid] = 1; sel = null; renderPanel(); draw(); return; }
+      msel = {}; select({ k: 'p', id: lid }); drag = { k: 'label', id: lid, q0: q, lo0: (lp_.lo || [0, 0]).slice(), moved: false, snap: snapStr() };
+    }
+    else if (tg && tg.getAttribute('data-tid')) {
+      var tid = tg.getAttribute('data-tid'), tt_ = state.texts.filter(function (z) { return z.id === tid; })[0]; if (!tt_) return;
+      msel = {}; select({ k: 't', id: tid }); drag = { k: 'text', id: tid, q0: q, x0: tt_.x, y0: tt_.y, moved: false, snap: snapStr() };
+    }
     else if (tg && tg.getAttribute('data-pid')) {
       var pid = tg.getAttribute('data-pid');
       if (e.shiftKey || selMode) {
@@ -499,6 +550,13 @@ function bindCanvas() {
       if (!drag.moved) { drag.moved = true; pushSnap(drag.snap); }
       var bnd = 2 * ((q.x - g.mid[0]) * g.nrm[0] + (q.y - g.mid[1]) * g.nrm[1]); if (Math.abs(bnd) < 14) bnd = 0; rr.bend = Math.round(bnd); draw(); return;
     }
+    if (drag.k === 'label' || drag.k === 'text') {
+      var q3 = pt(e), ex = q3.x - drag.q0.x, ey = q3.y - drag.q0.y;
+      if (!drag.moved) { if (Math.abs(ex) + Math.abs(ey) < 3) return; drag.moved = true; pushSnap(drag.snap); }
+      if (drag.k === 'label') { var pp2 = ixOf()[drag.id]; if (pp2) pp2.lo = [Math.round(drag.lo0[0] + ex), Math.round(drag.lo0[1] + ey)]; }
+      else { var t2 = state.texts.filter(function (z) { return z.id === drag.id; })[0]; if (t2) { t2.x = Math.round(drag.x0 + ex); t2.y = Math.round(drag.y0 + ey); } }
+      draw(); return;
+    }
     var q2 = pt(e), dx = q2.x - drag.q0.x, dy = q2.y - drag.q0.y;
     if (!drag.moved) { if (Math.abs(dx) + Math.abs(dy) < 4) return; drag.moved = true; pushSnap(drag.snap); }
     var o = drag.orig[drag.id], nx = Math.round((o.x + dx) / 10) * 10, ny = Math.round((o.y + dy) / 10) * 10, ddx = nx - o.x, ddy = ny - o.y;
@@ -516,14 +574,15 @@ function bindCanvas() {
         state.persons.forEach(function (p) { if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) msel[p.id] = 1; });
       } else { msel = {}; }
       renderPanel(); draw();
-    } else if (drag && (drag.k === 'p' || drag.k === 'bend') && drag.moved) save();
+    } else if (drag && (drag.k === 'p' || drag.k === 'bend' || drag.k === 'label' || drag.k === 'text') && drag.moved) { save(); renderPanel(); }
     drag = null;
   }
   svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
   svg.addEventListener('wheel', function (e) { e.preventDefault(); var q = pt(e); zoomAt(e.deltaY < 0 ? 0.87 : 1.15, q.x, q.y); }, { passive: false });
   svg.addEventListener('dblclick', function (e) {
-    var tg = e.target.closest && e.target.closest('[data-pid]'); if (!tg || mode) return;
-    select({ k: 'p', id: tg.getAttribute('data-pid') });
+    var tg = e.target.closest && e.target.closest('[data-pid],[data-lid],[data-tid]'); if (!tg || mode) return;
+    if (tg.getAttribute('data-tid')) { select({ k: 't', id: tg.getAttribute('data-tid') }); setTimeout(function () { var i = $('[data-f="t"]', panel); if (i) { i.focus(); i.select(); } }, 30); return; }
+    select({ k: 'p', id: tg.getAttribute('data-pid') || tg.getAttribute('data-lid') });
     setTimeout(function () { var i = $('[data-f="name"]', panel); if (i) { i.focus(); i.select(); } }, 30);
   });
   document.addEventListener('keydown', function (e) {
@@ -534,9 +593,10 @@ function bindCanvas() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing) { e.preventDefault(); redo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); toast('บันทึกในเครื่องแล้ว'); }
     if ((e.key === 'Delete' || e.key === 'Backspace') && !typing) { if (Object.keys(msel).length) { e.preventDefault(); doDeleteMulti(); } else if (sel) { e.preventDefault(); doDelete(); } }
-    if (!typing && !mode && /^Arrow/.test(e.key) && (sel && sel.k === 'p' || Object.keys(msel).length)) {
+    if (!typing && !mode && /^Arrow/.test(e.key) && (sel && (sel.k === 'p' || sel.k === 't') || Object.keys(msel).length)) {
       e.preventDefault(); var st = e.shiftKey ? 50 : 10, dx = e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, dy = e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0;
       if (Date.now() - nudgeT > 900) pushSnap(); nudgeT = Date.now();
+      if (!Object.keys(msel).length && sel.k === 't') { var tn = findSel(); if (tn) { tn.x += dx; tn.y += dy; } draw(); save(); return; }
       var ids = Object.keys(msel).length ? msel : (function () { var o = {}; o[sel.id] = 1; return o; })();
       state.persons.forEach(function (p) { if (ids[p.id]) { p.x += dx; p.y += dy; } }); draw(); save();
     }
@@ -552,7 +612,7 @@ function setActive(id, noFit) {
   if (!f) { f = newFam('ครอบครัวที่ 1'); project.families.push(f); }
   if (fam && dirty) persistNow();
   fam = f; state = fam.state; undoS = undoMap[fam.id] = undoMap[fam.id] || []; redoS = redoMap[fam.id] = redoMap[fam.id] || [];
-  sel = null; msel = {}; mode = null;
+  sel = null; msel = {}; mode = null; var lg0 = $('#legend'); if (lg0) lg0.dataset.k = '';
   fillFamSel(); renderPanel(); draw(); if (!noFit) fit(); updUR();
   try { localStorage.setItem('gm2_active', fam.id); } catch (e) { }
   Store.listSnaps(fam.id).then(function (a) { if (state.persons.length && (!a.length || Date.now() - a[0].at > 1800000)) { lastSnapAt = Date.now(); Store.addSnap(fam.id, snapStr(), 'เปิดผัง', state.persons.length).catch(function () { }); } }).catch(function () { });
@@ -579,25 +639,25 @@ function makeSample() {
   p('b2', 'ย่าทอง สุขใจ', 'F', 650, 70, { c: 1, dead: 1, age: '70', cod: 'มะเร็ง', cond: ['ca'], alias: 'ท.ส.' });
   p('m0h', 'ชาญ', 'M', -60, 230, { c: 2, byr: 2513, alias: 'ช.' });
   p('m0', 'สมใจ มั่นคง', 'F', 70, 230, { c: 2, byr: 2515, from: 'u1', alias: 'ส.ม.' });
-  p('m1', 'สมศรี สุขใจ', 'F', 330, 230, { c: 2, byr: 2517, cond: ['ht'], from: 'u1', alias: 'ส.ส.' });
-  p('f1', 'สมชาย สุขใจ', 'M', 460, 230, { c: 2, byr: 2514, cond: ['dm', 'alc'], from: 'u2', alias: 'ส.ส.', note: 'เกษตรกร' });
+  p('m1', 'สมศรี สุขใจ', 'F', 330, 230, { c: 2, byr: 2517, cond: ['ht'], from: 'u1', alias: 'ส.ส.', key: 1, occ: 'แม่บ้าน', role: 'อสม.' });
+  p('f1', 'สมชาย สุขใจ', 'M', 460, 230, { c: 2, byr: 2514, cond: ['dm', 'alc'], from: 'u2', alias: 'ส.ส.', occ: 'เกษตรกร', edu: 'ป.6', risk: 'ไม่ออกกำลังกาย' });
   p('f2', 'สมพงษ์ สุขใจ', 'M', 740, 230, { c: 2, byr: 2519, from: 'u2', alias: 'ส.ส.' });
   p('x1', 'พรทิพย์', 'F', 880, 230, { c: 2, byr: 2521, alias: 'พ.' });
-  p('k1', 'ก้อง สุขใจ', 'M', 330, 400, { c: 3, byr: 2540, from: 'u3', tw: 'k2', twi: 0, alias: 'ก.ส.' });
+  p('k1', 'ก้อง สุขใจ', 'M', 330, 400, { c: 3, byr: 2540, from: 'u3', tw: 'k2', twi: 0, alias: 'ก.ส.', inf: 1, occ: 'พนักงานบริษัท', mig: 'ทำงานกรุงเทพฯ' });
   p('k2', 'ใบเตย สุขใจ', 'F', 460, 400, { c: 3, byr: 2540, from: 'u3', tw: 'k1', st: 'pt', cond: ['dm'], alias: 'ใ.ส.', note: 'ผู้ให้ข้อมูลหลัก' });
   p('k3', 'น้องเล็ก', 'M', 590, 400, { c: 3, byr: 2550, from: 'u3', adopted: 1, alias: 'น.' });
-  p('k4', 'ต้น สุขใจ', 'M', 810, 400, { c: 3, byr: 2545, from: 'u4', alias: 'ต.ส.' });
+  p('k4', 'ต้น สุขใจ', 'M', 810, 400, { c: 3, byr: 2545, from: 'u4', alias: 'ต.ส.', occ: 'นักเรียน' });
   U.push({ id: 'u1', a: 'a1', b: 'a2', t: 'married' }, { id: 'u2', a: 'b1', b: 'b2', t: 'married' }, { id: 'u3', a: 'm1', b: 'f1', t: 'married' }, { id: 'u4', a: 'f2', b: 'x1', t: 'divorced' }, { id: 'u5', a: 'm0', b: 'm0h', t: 'cohab' });
   R.push({ id: 'r1', a: 'm0', b: 'm1', t: 'vclose', bend: -70 }, { id: 'r2', a: 'k4', b: 'f1', t: 'conflict', bend: -110 });
   Hm.push({ id: 'h1', ids: ['m1', 'f1', 'k1', 'k2', 'k3'] });
-  return { v: 2, persons: P, unions: U, rels: R, homes: Hm };
+  return { v: 2, persons: P, unions: U, rels: R, homes: Hm, texts: [{ id: 't1', x: 150, y: 330, t: 'ตระกูลนี้ทำนาและเลี้ยงวัว\n(ข้อมูลสมมติเพื่อสาธิต)', s: 13, c: '#6b7280', a: 'middle' }] };
 }
 
 /* ================= export ================= */
 var PAPERS = { a4l: { n: 'A4 แนวนอน', w: 297, h: 210 }, a4p: { n: 'A4 แนวตั้ง', w: 210, h: 297 }, a3l: { n: 'A3 แนวนอน', w: 420, h: 297 }, a3p: { n: 'A3 แนวตั้ง', w: 297, h: 420 }, auto: { n: 'ตามขนาดผัง (ไม่กำหนดกระดาษ)', w: 0, h: 0 } };
 function expOpts() {
   var e = fam.exp = fam.exp || {};
-  var d = { title: true, legend: true, gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true };
+  var d = { title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true };
   for (var k in d) if (e[k] === undefined) e[k] = d[k];
   return e;
 }
@@ -611,7 +671,7 @@ function measure(inner) {
 function buildExport(o) {
   var ctx = ctxFor(fam, { alias: o.alias, gen: o.gen, pre: 'x_', nosel: true });
   var content = GE.inner(state, ctx), bb = measure(content);
-  var padv = 26, items = o.legend ? GE.legendItems(state, ctx, false) : [], cw = Math.max(bb.w, 560), parts = '', y = padv;
+  var lmode = o.legendMode || (o.legend === false ? 'none' : 'used'), padv = 26, items = lmode === 'none' ? [] : GE.legendItems(state, ctx, lmode), cw = Math.max(bb.w, 560), parts = '', y = padv;
   var title = o.title && fam.title ? fam.title : '', sub = [];
   if (o.title && o.subtitle) { if (fam.house) sub.push('บ้านเลขที่ ' + fam.house); if (fam.place) sub.push(fam.place); if (fam.date) sub.push('ข้อมูล ณ วันที่ ' + thaiDate(fam.date)); }
   if (title) { y += 22; parts += '<text x="' + (cw / 2 + padv) + '" y="' + y + '" text-anchor="middle" font-size="22" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>'; y += 8; }
@@ -621,7 +681,7 @@ function buildExport(o) {
   parts += '<g transform="translate(' + ox.toFixed(1) + ',' + oy.toFixed(1) + ')">' + content + '</g>'; y += bb.h + 22;
   if (items.length) {
     parts += '<line x1="' + padv + '" y1="' + y + '" x2="' + (padv + cw) + '" y2="' + y + '" stroke="#d6d0bd" stroke-width="1"/>'; y += 22;
-    parts += '<text x="' + padv + '" y="' + y + '" font-size="14" font-weight="600" fill="#1f2a44">สัญลักษณ์</text>'; y += 8;
+    parts += '<text x="' + padv + '" y="' + y + '" font-size="14" font-weight="600" fill="#1f2a44">' + (lmode === 'standard' ? GE.LEGEND_TITLE : 'สัญลักษณ์') + '</text>'; y += 8;
     var lx = 0, ly = 0, rowH = 46;
     items.forEach(function (it) {
       var w = 66 + 8 + Math.min(300, it.label.length * 7.4) + 22;
@@ -646,7 +706,7 @@ function fname(ext) { return (fam.title || 'genogram').replace(/[\\/:*?"<>|]+/g,
 function renderExportDialog() {
   var o = expOpts(), r = buildExport(o), box = $('#expOpts');
   function ck(k, t) { return '<label class="ck"><input type="checkbox" data-eo="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + t + '</label>'; }
-  box.innerHTML = '<div class="st">ตัวเลือก</div>' + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + ck('legend', 'คำอธิบายสัญลักษณ์ (เฉพาะที่ใช้ในผัง)') + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') +
+  box.innerHTML = '<div class="st">ตัวเลือก</div>' + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') +
     (o.alias && r.missingAlias ? '<div class="warnbox">มี ' + r.missingAlias + ' คนที่ยังไม่ตั้งตัวย่อ — ระบบใช้ตัวย่อที่สร้างอัตโนมัติจากชื่อให้ (ตรวจดูก่อนส่ง)</div>' : '') +
     (!o.alias ? '<div class="warnbox">กำลังจะแสดง<b>ชื่อจริง</b>ของชาวบ้านในรูป — ตรวจว่ารายงานอนุญาตหรือไม่</div>' : '') +
     '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
@@ -754,6 +814,7 @@ function init() {
   $('#reltool').innerHTML = '<option value="">＋ เส้นความสัมพันธ์ / คู่ชีวิต / แฝด</option>' + linkOptions();
   $('#reltool').onchange = function () { var v = this.value; this.value = ''; if (!v) return; mode = { kind: 'link', type: v, from: null, keep: true }; sel = null; msel = {}; renderPanel(); draw(); };
   $('#selmode').onclick = function () { selMode = !selMode; this.classList.toggle('on', selMode); this.textContent = selMode ? '☑ เลือกหลายคน (เปิดอยู่)' : '☐ เลือกหลายคน'; };
+  $('#addText').onclick = addTextBox;
   $('#tidy').onchange = function () { var v = this.value; this.value = ''; if (v) tidy(v); };
   $('#famSel').onchange = function () { setActive(this.value); };
   $('#famNew').onclick = function () { addFamily(); };
