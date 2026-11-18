@@ -1,7 +1,7 @@
 /* Genogram Maker - drawing engine (pure functions, no DOM). */
 (function (G) {
 'use strict';
-var H = 18, INK = '#234e8c', REL = '#8e3a8a', ACC = '#ff7a00';
+var H = 18, INK = '#234e8c', REL = '#8e3a8a', ACC = '#ff7a00', MONO = false;
 var FILLS = ['#ffffff', '#e6c8ff', '#bfeeff', '#ffd9ee', '#c8f7c0', '#ffd2a0'];
 var FILL_NAMES = ['ไม่มีสี', 'ม่วง', 'ฟ้า', 'ชมพู', 'เขียว', 'ส้ม'];
 var FONT = "Sarabun,'Noto Sans Thai',Tahoma,sans-serif";
@@ -60,7 +60,10 @@ function sid(id) { return String(id).replace(/[^A-Za-z0-9_-]/g, '_'); }
 
 /* ---------- text ---------- */
 var PREFIX = /^(นางสาว|น\.ส\.|นาย|นาง|ด\.ช\.|ด\.ญ\.|เด็กชาย|เด็กหญิง|พ่อ|แม่|พี่|น้อง|ลุง|ป้า|น้า|อา|ปู่|ย่า|ตา|ยาย|ครู|หมอ|อ\.|คุณ)\s*/;
+var UNK = /^\s*(ไม่ทราบ|ไม่ระบุ|ไม่รู้|unknown|\?+\s*$)/i;
+function isUnk(s) { return UNK.test(String(s == null ? '' : s)); }
 function autoAlias(name) {
+  if (isUnk(name)) return 'ไม่ทราบ';
   var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
   return parts.map(function (w, i) {
     var x = i === 0 ? w.replace(PREFIX, '') : w;
@@ -71,26 +74,34 @@ function autoAlias(name) {
   }).join('');
 }
 function dispName(p, o) {
-  if (o && o.alias) { var a = String(p.alias || '').trim(); return a || (p.name ? autoAlias(p.name) : ''); }
-  return p.name || '';
+  var unkOn = !o || o.unk !== false;
+  if (unkOn && isUnk(p.name)) return 'ไม่ทราบ';
+  if (o && o.alias) { var a = String(p.alias || '').trim(); if (unkOn && isUnk(a)) return 'ไม่ทราบ'; return a || (p.name ? autoAlias(p.name) : (o.unkBlank ? 'ไม่ทราบ' : '')); }
+  return p.name || (o && o.unkBlank ? 'ไม่ทราบ' : '');
 }
 function ageText(p, o) {
   var a = String(p.age == null ? '' : p.age).trim(), n = null;
   if (a && /^\d+$/.test(a)) n = +a;
   else if (a) return a;
   else if (p.byr && !p.dead && o && o.refYear) n = o.refYear - (+p.byr);
-  if (n == null || isNaN(n) || n < 0 || n > 130) return '';
+  if (n == null || isNaN(n) || n < 0 || n > 130) return (o && o.unkBlank) ? 'ไม่ทราบอายุ' : '';
   return p.dead ? 'ตายอายุ ' + n + ' ปี' : n + ' ปี';
 }
 function condsOf(p, o) { return (p.cond || []).filter(function (k) { return o && o.cm && o.cm[k]; }); }
+/* patterns are drawn inside the symbol only when the family turns it on, and not for people marked "no fill" */
+function fillConds(p, o) { return (o && o.condFill && !p.nofill) ? condsOf(p, o) : []; }
+function dzList(p) { return String(p.dz || '').split(/[\n,，;]+/).map(function (t) { return t.trim(); }).filter(Boolean); }
 function textLines(p, o) {
   var out = [], nm = dispName(p, o), cs = condsOf(p, o), cm = (o && o.cm) || {};
   String(nm).split(/\s+/).filter(Boolean).forEach(function (t) { out.push([t, 'name']); });
-  var ag = ageText(p, o); if (ag) out.push([ag, 'age']);
+  var ag = ageText(p, o);
+  if (ag && nm === 'ไม่ทราบ' && /^ไม่ทราบ(อายุ)?$/.test(ag)) ag = ''; /* name and age both unknown: say it once */
+  if (ag) out.push([ag, 'age']);
   if (p.edu) out.push([p.edu, 'edu']);
   if (p.occ) out.push([p.occ, 'occ']);
   if (p.role) out.push([p.role, 'role']);
   if (p.mig) out.push([p.mig, 'mig']);
+  if (dzList(p).length && (!o || o.condText !== false)) dzList(p).forEach(function (t) { out.push([t, 'cond']); });
   if (cs.length && (!o || o.condText !== false)) {
     var dis = cs.filter(function (k) { return !cm[k].risk; }), rk = cs.filter(function (k) { return cm[k].risk; });
     if (dis.length) out.push([dis.map(function (k) { return cm[k].t; }).join(' · '), 'cond']);
@@ -132,12 +143,12 @@ function geomEl(p, attrs) {
   return '<polygon points="' + x + ',' + (y - h) + ' ' + (x + h) + ',' + y + ' ' + x + ',' + (y + h) + ' ' + (x - h) + ',' + y + '" ' + attrs + '/>';
 }
 function shape(p, o) {
-  var x = p.x, y = p.y, f = p.key ? KEYFILL : FILLS[p.c || 0], s = '', st = p.st || '', pre = (o && o.pre) || '';
-  if (st === 'sa') return L(x, y - 26, x, y - 10) + '<circle cx="' + x + '" cy="' + y + '" r="11" fill="' + INK + '" stroke="' + INK + '" stroke-width="1.8"/>';
-  if (st === 'ab') return L(x, y - 26, x, y - 11) + '<circle cx="' + x + '" cy="' + y + '" r="11" fill="#fff" stroke="' + INK + '" stroke-width="1.8"/>' + L(x - 11, y, x + 11, y, INK, 1.8) + L(x, y - 11, x, y + 11, INK, 1.8);
+  var x = p.x, y = p.y, f = MONO ? (p.key ? '#e6e6e6' : '#fff') : (p.key ? KEYFILL : FILLS[p.c || 0]), s = '', st = p.st || '', pre = (o && o.pre) || '';
+  if (st === 'sa') return L(x, y - 26, x, y - 10, INK, 3.4) + '<circle cx="' + x + '" cy="' + y + '" r="11" fill="' + INK + '" stroke="' + INK + '" stroke-width="1.8"/>';
+  if (st === 'ab') return L(x, y - 26, x, y - 11, INK, 3.4) + '<circle cx="' + x + '" cy="' + y + '" r="11" fill="#fff" stroke="' + INK + '" stroke-width="1.8"/>' + L(x - 11, y, x + 11, y, INK, 1.8) + L(x, y - 11, x, y + 11, INK, 1.8);
   var h = half(p), stroke = 'stroke="' + INK + '" stroke-width="1.8" stroke-linejoin="round"';
   s = geomEl(p, 'fill="' + f + '" ' + stroke);
-  var cs = condsOf(p, o);
+  var cs = fillConds(p, o);
   if (cs.length) {
     var n = Math.min(3, cs.length), w = 2 * (st === 'pg' ? H : h), x0 = x - w / 2, t0 = top(p), hh = bot(p) - t0, cid = pre + 'cl_' + sid(p.id);
     for (var i = 0; i < n; i++) s += '<rect x="' + (x0 + i * w / n) + '" y="' + t0 + '" width="' + (w / n) + '" height="' + hh + '" fill="url(#' + pre + 'pt_' + cs[i] + ')" clip-path="url(#' + cid + ')"/>';
@@ -149,10 +160,12 @@ function shape(p, o) {
     return L(ax - 18, ay - 18, ax, ay, INK, 2) + '<polygon points="' + (ax + 1) + ',' + (ay + 1) + ' ' + (ax - 10) + ',' + (ay - 3) + ' ' + (ax - 3) + ',' + (ay - 10) + '" fill="' + INK + '"/>';
   }
   if (st === 'pt') {
-    if (p.sex === 'M') s += '<rect x="' + (x - h + 5) + '" y="' + (y - h + 5) + '" width="' + (2 * h - 10) + '" height="' + (2 * h - 10) + '" fill="none" stroke="' + INK + '" stroke-width="1.4"/>';
+    var ps = (o && o.pstyle) || 'both'; if (MONO && ps === 'both') ps = 'double';
+    if (ps === 'arrow') { /* plain symbol + arrow only */ }
+    else if (p.sex === 'M') s += '<rect x="' + (x - h + 5) + '" y="' + (y - h + 5) + '" width="' + (2 * h - 10) + '" height="' + (2 * h - 10) + '" fill="none" stroke="' + INK + '" stroke-width="1.4"/>';
     else if (p.sex === 'F') s += '<circle cx="' + x + '" cy="' + y + '" r="' + (h - 5) + '" fill="none" stroke="' + INK + '" stroke-width="1.4"/>';
     else s += '<polygon points="' + x + ',' + (y - h + 6) + ' ' + (x + h - 6) + ',' + y + ' ' + x + ',' + (y + h - 6) + ' ' + (x - h + 6) + ',' + y + '" fill="none" stroke="' + INK + '" stroke-width="1.4"/>';
-    if (!(o && o.pstyle === 'double')) s += arrow();
+    if (ps !== 'double') s += arrow();
   } else if (p.inf) s += arrow();
   if (p.dead) {
     var q = p.sex === 'M' ? h : (p.sex === 'F' ? h * 0.72 : h * 0.55);
@@ -243,13 +256,18 @@ function relSvg(r, m, selected, o) {
     for (var i = 0; i <= N; i++) { var q = P(i / N, (i === 0 || i === N) ? 0 : (i % 2 ? amp : -amp)); s += (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1); }
     return s;
   }
+  function wave(amp, wl) {
+    var n = Math.max(2, Math.round(g.len / wl)), N = n * 10, s = '';
+    for (var i = 0; i <= N; i++) { var q = P(i / N, amp * Math.sin(2 * Math.PI * n * i / N)); s += (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1); }
+    return s;
+  }
   var pth = '', arrow = '', dash = '', t = r.t, W = 2;
-  if (t === 'close') pth = pl(-2.8) + pl(2.8);
-  else if (t === 'vclose') pth = pl(-5) + pl(0) + pl(5);
-  else if (t === 'conflict') pth = zig(6);
+  if (t === 'close') { pth = pl(-3.4) + pl(0) + pl(3.4); W = 1.5; }
+  else if (t === 'vclose') { pth = pl(-5.1) + pl(-1.7) + pl(1.7) + pl(5.1); W = 1.5; }
+  else if (t === 'conflict') { pth = wave(4, 9); W = 1.7; }
   else if (t === 'distant') { pth = pl(0); dash = ' stroke-dasharray="1 6"'; W = 2.4; }
   else if (t === 'control') pth = pl(0);
-  else if (t === 'violence') pth = zig(6);
+  else if (t === 'violence') { pth = wave(6, 13); W = 1.8; }
   else if (t === 'lovehate') pth = pl(-6.5) + pl(6.5) + zig(4);
   if (t === 'control' || t === 'violence') {
     var e = P(1, 0), u = g.T(1), nx = -u[1], ny = u[0];
@@ -275,6 +293,94 @@ function autoBend(A, B, st) {
     if (md > bestD) { bestD = md; best = bend; }
   }
   return best;
+}
+
+
+/* ---------- automatic label placement: pick below/above/left/right per person so text avoids symbols, lines and other text ---------- */
+function strW(t, fs) { var n = 0; Array.from(String(t)).forEach(function (c) { if (!/[ัิ-ฺ็-๎]/.test(c)) n++; }); return n * fs * 0.56; }
+function labelRect(p, ls, pos, sc) {
+  var n = ls.length, LH = 15 * sc, w = 0, lo = p.lo || [0, 0];
+  ls.forEach(function (t) { w = Math.max(w, strW(t[0], (t[1] === 'name' ? 15 : 12.5) * sc)); });
+  var x0, y0, hgt = (n - 1) * LH + 18 * sc;
+  if (pos === 'b') { x0 = p.x - w / 2; y0 = bot(p) + 16 * sc - 14 * sc; }
+  else if (pos === 't') { x0 = p.x - w / 2; y0 = top(p) - 7 - (n - 1) * LH - 14 * sc; }
+  else if (pos === 'l') { x0 = p.x - half(p) - 7 - w; y0 = p.y + 5 - (n - 1) * LH / 2 - 14 * sc; }
+  else { x0 = p.x + half(p) + 7; y0 = p.y + 5 - (n - 1) * LH / 2 - 14 * sc; }
+  return { x0: x0 + lo[0], y0: y0 + lo[1], x1: x0 + w + lo[0], y1: y0 + hgt + lo[1] };
+}
+function lineSamples(st, m) {
+  var pts = [];
+  function seg(x1, y1, x2, y2) { var d = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1)), n = Math.max(1, Math.ceil(d / 6)); for (var i = 0; i <= n; i++) pts.push([x1 + (x2 - x1) * i / n, y1 + (y2 - y1) * i / n]); }
+  st.unions.forEach(function (u) {
+    var g = ugeo(u, m); if (!g) return;
+    if (g.b) { seg(g.a.x, bot(g.a), g.a.x, g.ey); seg(g.b.x, bot(g.b), g.b.x, g.ey); seg(g.a.x, g.ey, g.b.x, g.ey); }
+    var ks = kidsOf(st, u); if (!ks.length) return;
+    var mintop = Math.min.apply(null, ks.map(top)), by = u.by != null ? u.by : mintop - 30;
+    if (u.by == null && by < g.ly + 14) by = g.ly + (mintop - g.ly) / 2;
+    var xs = [g.mx]; ks.forEach(function (k) { xs.push(k.x); seg(k.x, by, k.x, top(k)); });
+    seg(g.mx, g.ly, g.mx, by); seg(Math.min.apply(null, xs), by, Math.max.apply(null, xs), by);
+  });
+  st.rels.forEach(function (r) { var g = relGeom(r, m); if (!g) return; for (var i = 0; i <= 14; i++) pts.push(g.B(i / 14)); });
+  return pts;
+}
+function overlapArea(a, b) { var w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0); return w > 0 && h > 0 ? w * h : 0; }
+/* axis-aligned family-line segments [x1,y1,x2,y2] (couple lines, child bars, drops) — used to mark lines that continue on another page */
+function lineSegs(st) {
+  var m = ixOf(st), out = [];
+  st.unions.forEach(function (u) {
+    var g = ugeo(u, m); if (!g) return;
+    if (g.b) { out.push([g.a.x, bot(g.a), g.a.x, g.ey], [g.b.x, bot(g.b), g.b.x, g.ey], [g.a.x, g.ey, g.b.x, g.ey]); }
+    var ks = kidsOf(st, u); if (!ks.length) return;
+    var mintop = Math.min.apply(null, ks.map(top)), by = u.by != null ? u.by : mintop - 30;
+    if (u.by == null && by < g.ly + 14) by = g.ly + (mintop - g.ly) / 2;
+    var xs = [g.mx]; ks.forEach(function (k) { xs.push(k.x); out.push([k.x, by, k.x, top(k)]); });
+    out.push([g.mx, g.ly, g.mx, by], [Math.min.apply(null, xs), by, Math.max.apply(null, xs), by]);
+  });
+  return out;
+}
+/* horizontal extent of every person incl. text: [{id,x0,x1,y0,y1}] — page cuts are placed where nothing straddles */
+function personBoxes(st, o) {
+  var m = ixOf(st), out = [];
+  st.persons.forEach(function (p) {
+    var h = half(p) + 3; out.push({ id: p.id, x0: p.x - h, x1: p.x + h, y0: top(p), y1: bot(p) });
+    var ls = p.lh ? [] : textLines(p, o);
+    if (ls.length) {
+      var q0 = {}; for (var k in p) q0[k] = p[k]; delete q0.lp; var pos = p.lo ? autoLp(q0, st, m) : (p.lp || autoLp(q0, st, m));
+      var r = labelRect(p, ls, pos, p.ls || 1); if (p.lo) out.push({ id: p.id, x0: r.x0, x1: r.x1, y0: r.y0, y1: r.y1 }); /* dragged-away label: its own box, so it does not widen the symbol */
+      else { var b0 = out[out.length - 1]; b0.x0 = Math.min(b0.x0, r.x0); b0.x1 = Math.max(b0.x1, r.x1); b0.y0 = Math.min(b0.y0, r.y0); b0.y1 = Math.max(b0.y1, r.y1); } /* label sits next to its symbol: keep them on the same page */
+    }
+  });
+  return out;
+}
+/* returns { personId: 'b'|'t'|'l'|'r'|'' } ('' = automatic default). Labels the user dragged (lo) or hid (lh) are left alone and treated as obstacles. */
+function autoLabels(st, o) {
+  var m = ixOf(st), pts = lineSamples(st, m), cur = {}, info = {}, order = ['b', 't', 'l', 'r'];
+  st.persons.forEach(function (p) {
+    var ls = p.lh ? [] : textLines(p, o); if (!ls.length) return;
+    var fixed = !!p.lo, sc = p.ls || 1, q0 = {}, def; for (var qk in p) q0[qk] = p[qk]; delete q0.lp; def = autoLp(q0, st, m);
+    info[p.id] = { p: p, ls: ls, sc: sc, fixed: fixed, def: def };
+    cur[p.id] = labelRect(p, ls, fixed ? def : (p.lp || def), sc);
+    if (p.lp && !fixed) info[p.id].pos = p.lp; else info[p.id].pos = def;
+  });
+  var pb = st.persons.map(function (p) { var h = half(p) + 3; return { id: p.id, x0: p.x - h, x1: p.x + h, y0: top(p) - 3, y1: bot(p) + 3 }; });
+  var res = {};
+  for (var pass = 0; pass < 3; pass++) {
+    Object.keys(info).forEach(function (id) {
+      var I = info[id]; if (I.fixed) return;
+      var best = null, bs = 1e18;
+      order.forEach(function (pos, oi) {
+        var r = labelRect(I.p, I.ls, pos, I.sc), sc = 0;
+        pb.forEach(function (q) { if (q.id !== id) sc += overlapArea(r, q) * 10; });
+        Object.keys(cur).forEach(function (k) { if (k !== id) sc += overlapArea(r, cur[k]) * 4; });
+        for (var i = 0; i < pts.length; i++) { var q = pts[i]; if (q[0] >= r.x0 - 1 && q[0] <= r.x1 + 1 && q[1] >= r.y0 - 1 && q[1] <= r.y1 + 1) sc += 60; }
+        sc += (pos === I.def ? 0 : 400) + oi;
+        if (sc < bs) { bs = sc; best = pos; }
+      });
+      I.pos = best; cur[id] = labelRect(I.p, I.ls, best, I.sc);
+    });
+  }
+  Object.keys(info).forEach(function (id) { var I = info[id]; if (!I.fixed) res[id] = I.pos === I.def ? '' : I.pos; });
+  return res;
 }
 
 /* ---------- generations ---------- */
@@ -305,33 +411,91 @@ function gens(st) {
   if (mn !== 1e9) for (k in g) g[k] -= mn;
   return g;
 }
-function genLabels(st, o) {
+function genLabels(st, o, xAt) {
   var g = gens(st), rows = {}, minX = 1e9, out = '';
   st.persons.forEach(function (p) { minX = Math.min(minX, p.x); var v = g[p.id]; if (v == null) return; (rows[v] = rows[v] || []).push(p.y); });
   Object.keys(rows).forEach(function (k) {
     var ys = rows[k], y = ys.reduce(function (a, b) { return a + b; }, 0) / ys.length;
-    out += '<text x="' + (minX - 100) + '" y="' + (y + 6) + '" text-anchor="middle" font-size="19" font-weight="600" fill="#7a8bab" pointer-events="none">' + (ROMAN[+k] || (+k + 1)) + '</text>';
+    out += '<text x="' + (xAt != null ? xAt : minX - 100) + '" y="' + (y + 6) + '" text-anchor="middle" font-size="19" font-weight="600" fill="#7a8bab" pointer-events="none">' + (ROMAN[+k] || (+k + 1)) + '</text>';
   });
   return out;
 }
 
 /* ---------- main render ---------- */
+/* household loop that follows its members (not a box): contour of "distance to the members' skeleton < R" */
+function homeSkel(st, ids, m) {
+  var pts = ids.map(function (i) { return m[i]; }).filter(Boolean), segs = [], n = pts.length;
+  if (n < 2) return { pts: pts, segs: segs };
+  var rel = {};
+  st.unions.forEach(function (u) { if (u.a && u.b && m[u.a] && m[u.b]) { rel[u.a + '|' + u.b] = rel[u.b + '|' + u.a] = 1; } });
+  pts.forEach(function (p) { var u = p.from && st.unions.filter(function (z) { return z.id === p.from; })[0]; if (u) [u.a, u.b].forEach(function (a) { if (a) { rel[a + '|' + p.id] = rel[p.id + '|' + a] = 1; } }); });
+  var E = []; for (var i = 0; i < n; i++) for (var j = i + 1; j < n; j++) { var d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y); E.push([i, j, d * (rel[pts[i].id + '|' + pts[j].id] ? 0.5 : 1)]); }
+  E.sort(function (a, b) { return a[2] - b[2]; });
+  var par = pts.map(function (_, k) { return k; }); function f(k) { while (par[k] !== k) k = par[k] = par[par[k]]; return k; }
+  E.forEach(function (e) { var a = f(e[0]), b = f(e[1]); if (a !== b) { par[a] = b; segs.push([pts[e[0]].x, pts[e[0]].y, pts[e[1]].x, pts[e[1]].y]); } });
+  return { pts: pts, segs: segs };
+}
+function skelDist(sk, x, y) {
+  var best = 1e9; sk.pts.forEach(function (p) { var d = Math.hypot(p.x - x, p.y - y); if (d < best) best = d; });
+  sk.segs.forEach(function (s) { var dx = s[2] - s[0], dy = s[3] - s[1], l2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((x - s[0]) * dx + (y - s[1]) * dy) / l2)), d = Math.hypot(x - s[0] - t * dx, y - s[1] - t * dy); if (d < best) best = d; });
+  return best;
+}
+function hugPath(sk, R) {
+  var xs = sk.pts.map(function (p) { return p.x; }), ys = sk.pts.map(function (p) { return p.y; });
+  var x0 = Math.min.apply(null, xs) - R - 8, x1 = Math.max.apply(null, xs) + R + 8, y0 = Math.min.apply(null, ys) - R - 8, y1 = Math.max.apply(null, ys) + R + 8;
+  var cs = Math.max(3, Math.sqrt((x1 - x0) * (y1 - y0) / 60000)), nx = Math.ceil((x1 - x0) / cs), ny = Math.ceil((y1 - y0) / cs), v = [];
+  for (var j = 0; j <= ny; j++) for (var i = 0; i <= nx; i++) v.push(R - skelDist(sk, x0 + i * cs, y0 + j * cs));
+  function V(i, j) { return v[j * (nx + 1) + i]; }
+  var d = '';
+  for (j = 0; j < ny; j++) for (i = 0; i < nx; i++) {
+    var a = V(i, j), b = V(i + 1, j), c = V(i + 1, j + 1), e = V(i, j + 1), X = x0 + i * cs, Y = y0 + j * cs, T = null, Rt = null, B = null, Lf = null;
+    if ((a > 0) !== (b > 0)) T = [X + cs * a / (a - b), Y];
+    if ((b > 0) !== (c > 0)) Rt = [X + cs, Y + cs * b / (b - c)];
+    if ((e > 0) !== (c > 0)) B = [X + cs * e / (e - c), Y + cs];
+    if ((a > 0) !== (e > 0)) Lf = [X, Y + cs * a / (a - e)];
+    var q = [T, Rt, B, Lf].filter(Boolean);
+    function seg(p1, p2) { d += 'M' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1) + 'L' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1); }
+    if (q.length === 2) seg(q[0], q[1]);
+    else if (q.length === 4) { if ((a + b + c + e) / 4 > 0) { seg(T, Rt); seg(B, Lf); } else { seg(T, Lf); seg(Rt, B); } }
+  }
+  return d;
+}
+/* people NOT in the household whose symbol the loop would touch */
+function homeOutsiders(st, h) {
+  var m = ixOf(st), sk = homeSkel(st, h.ids, m), R = H * 1.55, n = 0;
+  if (!sk.pts.length) return 0;
+  st.persons.forEach(function (p) { if (h.ids.indexOf(p.id) < 0 && skelDist(sk, p.x, p.y) < R + H * 0.4) n++; });
+  return n;
+}
 function inner(st, o) {
   o = o || {};
-  var pre = o.pre || '', m = ixOf(st), back = [], lines = [], rels = [], pers = [], labs = [], hit = [], defs = '';
+  MONO = !!o.mono; INK = MONO ? '#000' : '#234e8c'; REL = MONO ? '#000' : '#8e3a8a';
+  var pre = o.pre || '', m = ixOf(st), back = [], lines = [], rels = [], pers = [], labs = [], hit = [], homeHit = [], defs = '';
   var sel_ = o.sel || null, md = o.mode || null, ms = o.msel || {};
   var usedC = {};
-  st.persons.forEach(function (p) { if (isSmall(p)) return; var cs = condsOf(p, o); if (!cs.length) return; cs.forEach(function (k) { usedC[k] = 1; }); defs += '<clipPath id="' + pre + 'cl_' + sid(p.id) + '">' + geomEl(p, '') + '</clipPath>'; });
-  Object.keys(usedC).forEach(function (k) { defs += patDef(pre + 'pt_' + k, o.cm[k]); });
+  st.persons.forEach(function (p) { if (isSmall(p)) return; var cs = fillConds(p, o).slice(0, 3); if (!cs.length) return; cs.forEach(function (k) { usedC[k] = 1; }); defs += '<clipPath id="' + pre + 'cl_' + sid(p.id) + '">' + geomEl(p, '') + '</clipPath>'; });
+  Object.keys(usedC).forEach(function (k) { defs += patDef(pre + 'pt_' + k, MONO ? Object.assign({}, o.cm[k], { col: '#000' }) : o.cm[k]); });
 
   st.homes.forEach(function (h) {
     var ps = h.ids.map(function (i) { return m[i]; }).filter(Boolean); if (!ps.length) return;
     var x0 = Math.min.apply(null, ps.map(function (p) { return p.x; })), x1 = Math.max.apply(null, ps.map(function (p) { return p.x; }));
     var y0 = Math.min.apply(null, ps.map(function (p) { return p.y; })), y1 = Math.max.apply(null, ps.map(function (p) { return p.y; }));
-    var rx = ((x1 - x0) / 2 + H) * 1.42 + 12, ry = ((y1 - y0) / 2 + H) * 1.42 + 12, hc = o.hhc || INK;
-    var on = sel_ && sel_.k === 'h' && sel_.id === h.id, hp = o.nosel ? '' : ' data-hid="' + h.id + '" pointer-events="stroke" style="cursor:pointer"';
-    if (o.hhs === 'round') { var pd = H * 1.9; back.push('<rect x="' + (x0 - pd) + '" y="' + (y0 - pd) + '" width="' + (x1 - x0 + 2 * pd) + '" height="' + (y1 - y0 + 2 * pd) + '" rx="24" fill="none" stroke="' + (on ? ACC : hc) + '" stroke-width="' + (on ? 3 : 1.8) + '"' + hp + '/>'); }
-    else back.push('<ellipse cx="' + (x0 + x1) / 2 + '" cy="' + (y0 + y1) / 2 + '" rx="' + rx + '" ry="' + ry + '" fill="none" stroke="' + (on ? ACC : hc) + '" stroke-width="' + (on ? 3 : 1.5) + '"' + hp + '/>');
+    var rx = ((x1 - x0) / 2 + H) * 1.42 + 12, ry = ((y1 - y0) / 2 + H) * 1.42 + 12, hc = MONO ? INK : (o.hhc || INK);
+    var on = sel_ && sel_.k === 'h' && sel_.id === h.id, hp = ' data-hid="' + h.id + '" pointer-events="stroke" style="cursor:pointer"';
+    var stk = ' fill="none" stroke="' + (on ? ACC : hc) + '" stroke-width="' + (on ? 3 : (MONO ? 1.1 : 1.6)) + '"';
+    var hs = ' fill="none" stroke="#000" stroke-opacity="0" stroke-width="16"' + hp;
+    var lx = (x0 + x1) / 2, ly = y0 - H * 2.2;
+    if (o.hhs === 'hug') {
+      var hk = homeSkel(st, h.ids, m), hd = hugPath(hk, H * 1.55), top = hk.pts.reduce(function (a, p) { return p.y < a.y ? p : a; }, hk.pts[0]); lx = top.x; ly = top.y - H * 2.3;
+      back.push('<path d="' + hd + '"' + stk + ' stroke-linecap="round"/>'); if (!o.nosel) homeHit.push('<path d="' + hd + '"' + hs + ' stroke-linecap="round"/>');
+    } else if (o.hhs === 'round') {
+      var pd = H * 1.9, g = ' x="' + (x0 - pd) + '" y="' + (y0 - pd) + '" width="' + (x1 - x0 + 2 * pd) + '" height="' + (y1 - y0 + 2 * pd) + '" rx="24"';
+      back.push('<rect' + g + stk + '/>'); if (!o.nosel) homeHit.push('<rect' + g + hs + '/>');
+    } else {
+      var g2 = ' cx="' + (x0 + x1) / 2 + '" cy="' + (y0 + y1) / 2 + '" rx="' + rx + '" ry="' + ry + '"';
+      back.push('<ellipse' + g2 + stk + '/>'); if (!o.nosel) homeHit.push('<ellipse' + g2 + hs + '/>');
+    }
+    if (h.label) labs.push('<text x="' + lx + '" y="' + ly + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + hc + '" paint-order="stroke" stroke="#fff" stroke-width="3" pointer-events="none">' + $esc(h.label) + '</text>');
   });
 
   st.unions.forEach(function (u) {
@@ -391,7 +555,7 @@ function inner(st, o) {
     if (!o.nolabels) labs.push(label(p, st, m, o));
   });
   var txs = (st.texts || []).map(function (t) { return textObj(t, sel_ && sel_.k === 't' && sel_.id === t.id, o); });
-  return (defs ? '<defs>' + defs + '</defs>' : '') + back.join('') + lines.join('') + hit.join('') + rels.join('') + pers.join('') + (o.gen && !o.nolabels ? genLabels(st, o) : '') + labs.join('') + txs.join('');
+  return (defs ? '<defs>' + defs + '</defs>' : '') + back.join('') + lines.join('') + homeHit.join('') + hit.join('') + rels.join('') + pers.join('') + (o.gen && !o.nolabels ? genLabels(st, o) : '') + labs.join('') + txs.join('');
 }
 
 function bounds(st, o) {
@@ -421,10 +585,14 @@ function mini(persons, unions, rels, homes, vb, mo) {
 }
 function aaSvg(col) { return '<svg viewBox="0 0 60 44" width="66" height="44"><text x="30" y="29" text-anchor="middle" font-size="20" font-weight="600" fill="' + col + '">Aa</text></svg>'; }
 /* mode: 'used' = only what the diagram uses; 'standard' = full table of the manual + extras that are used; 'panel' = everything */
+function twinSvg(identical, mono) {
+  var c = mono ? '#000' : '#234e8c';
+  return '<svg viewBox="0 0 120 70" preserveAspectRatio="xMidYMid meet" width="66" height="44"><g fill="#fff" stroke="' + c + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><circle cx="30" cy="48" r="16"/><circle cx="90" cy="48" r="16"/><path d="M40.3 35.7L60 20L79.7 35.7" fill="none"/>' + (identical ? '<path d="M46 48H74" fill="none"/>' : '') + '</g></svg>';
+}
 function legendItems(st, o, mode) {
   mode = mode === true ? 'panel' : (mode || 'used');
   var cm = o.cm || {}, items = [], std = mode !== 'used', every = mode === 'panel';
-  var mo = { cm: cm, adopt: o.adopt, pstyle: o.pstyle, hhs: o.hhs, hhc: o.hhc };
+  var mo = { cm: cm, adopt: o.adopt, pstyle: o.pstyle, hhs: o.hhs, hhc: o.hhc, mono: !!o.mono };
   function has(f) { return std || st.persons.some(f); }
   function hasX(f) { return every || st.persons.some(f); }
   function add(label, svg) { items.push({ label: label, svg: svg }); }
@@ -436,9 +604,9 @@ function legendItems(st, o, mode) {
   if (has(function (p) { return p.st === 'sa'; })) add('แท้งเอง', mini([mp('a', 'F', 30, 40, { st: 'sa' })], 0, 0, 0, '0 0 60 72', mo));
   if (has(function (p) { return p.st === 'ab'; })) add('ทำแท้ง', mini([mp('a', 'F', 30, 40, { st: 'ab' })], 0, 0, 0, '0 0 60 72', mo));
   if (has(function (p) { return p.st === 'pg'; })) add('กำลังตั้งครรภ์', mini([mp('a', 'F', 30, 36, { st: 'pg' })], 0, 0, 0, '0 0 60 72', mo));
-  if (has(function (p) { return p.tw && p.twi; })) add('แฝดเหมือน', mini([mp('a', 'M', 60, 20), mp('x', 'F', 36, 104, { from: 'u', tw: 'y', twi: 1 }), mp('y', 'F', 84, 104, { from: 'u', tw: 'x', twi: 1 })], [{ id: 'u', a: 'a', b: null, t: 'married' }], 0, 0, '0 0 120 136', mo));
-  if (has(function (p) { return p.tw && !p.twi; })) add('แฝดต่าง', mini([mp('a', 'M', 60, 20), mp('x', 'F', 36, 104, { from: 'u', tw: 'y' }), mp('y', 'M', 84, 104, { from: 'u', tw: 'x' })], [{ id: 'u', a: 'a', b: null, t: 'married' }], 0, 0, '0 0 120 136', mo));
-  if (has(function (p) { return p.adopted; })) add('ลูกบุญธรรม', mini([mp('a', 'F', 62, 40, { adopted: 1 })], 0, 0, 0, '0 0 110 76', mo));
+  if (has(function (p) { return p.tw && p.twi; })) add('แฝดเหมือน', twinSvg(true, o.mono));
+  if (has(function (p) { return p.tw && !p.twi; })) add('แฝดต่าง', twinSvg(false, o.mono));
+  if (has(function (p) { return p.adopted; })) add('ลูกบุญธรรม', mini([mp('a', 'F', 62, 40, { adopted: 1 }), mp('b', 'M', 112, 40)], 0, 0, 0, '-36 0 190 76', mo));
   function un(t, lab) {
     if (std || st.unions.some(function (u) { return u.b && u.t === t; })) add(lab, mini([mp('a', 'M', 28, 22), mp('b', 'F', 112, 22)], [{ id: 'u', a: 'a', b: 'b', t: t }], 0, 0, '0 0 140 70', mo));
   }
@@ -463,7 +631,8 @@ function legendItems(st, o, mode) {
   Object.keys(cm).forEach(function (k) {
     if (!every && !usedC[k]) return;
     var c = cm[k], id = 'lc' + (++legCtr) + '_';
-    add(c.t + ' = ' + c.n, '<svg viewBox="0 0 60 44" width="66" height="44"><defs>' + patDef(id + 'p', c) + '</defs><rect x="18" y="8" width="26" height="26" fill="url(#' + id + 'p)" stroke="' + INK + '" stroke-width="1.8"/></svg>');
+    if (!o.condFill) { add(c.t + ' = ' + c.n, aaSvg(textColor(c.risk ? 'risk' : 'cond', o, null))); return; }
+    add(c.t + ' = ' + c.n, '<svg viewBox="0 0 60 44" width="66" height="44"><defs>' + patDef(id + 'p', o.mono ? Object.assign({}, c, { col: '#000' }) : c) + '</defs><rect x="18" y="8" width="26" height="26" fill="url(#' + id + 'p)" stroke="' + INK + '" stroke-width="1.8"/></svg>');
   });
   return items;
 }
@@ -475,6 +644,6 @@ G.GE = {
   H: H, INK: INK, ACC: ACC, FONT: FONT, FILLS: FILLS, FILL_NAMES: FILL_NAMES, RELS: RELS, UT: UT, STS: STS, SEX: SEX, ROMAN: ROMAN,
   COND_PRESETS: COND_PRESETS, condMapFor: condMapFor, ixOf: ixOf, isSmall: isSmall, half: half, top: top, bot: bot,
   inner: inner, ugeo: ugeo, bounds: bounds, relGeom: relGeom, autoBend: autoBend, gens: gens, genLabels: genLabels, kidsOf: kidsOf,
-  autoAlias: autoAlias, TEXT_KINDS: TEXT_KINDS, textColor: textColor, KEYFILL: KEYFILL, LEGEND_TITLE: LEGEND_TITLE, dispName: dispName, ageText: ageText, legendItems: legendItems, legendHTML: legendHTML, esc: $esc
+  autoAlias: autoAlias, TEXT_KINDS: TEXT_KINDS, textColor: textColor, KEYFILL: KEYFILL, LEGEND_TITLE: LEGEND_TITLE, dispName: dispName, ageText: ageText, legendItems: legendItems, legendHTML: legendHTML, autoLabels: autoLabels, lineSegs: lineSegs, personBoxes: personBoxes, partnersOf: function (st) { return st.unions.filter(function (u) { return u.a && u.b; }).map(function (u) { return [u.a, u.b]; }); }, isUnk: isUnk, dzList: dzList, homeOutsiders: homeOutsiders, esc: $esc
 };
 })(window);

@@ -27,7 +27,7 @@ var svg, panel, ctr = 0;
 
 function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [] }; }
 function newFam(title) {
-  return { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title || '', house: '', place: '', interviewer: '', date: '', alias: false, showNote: true, condText: true, gen: true, typed: false, tcol: {}, pstyle: 'both', adopt: 'caption', hhs: 'ellipse', hhc: '', cx: {}, exp: {}, state: newState(), created: Date.now(), updated: Date.now() };
+  return { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title || '', house: '', place: '', interviewer: '', date: '', alias: false, showNote: true, condText: true, gen: true, typed: false, tcol: {}, pstyle: 'both', adopt: 'caption', hhs: 'ellipse', hhc: '', condFill: false, mono: false, unk: true, unkBlank: false, cx: {}, exp: {}, state: newState(), created: Date.now(), updated: Date.now() };
 }
 function normalize(s) {
   s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.texts = s.texts || []; s.v = 2;
@@ -46,7 +46,7 @@ function normFam(f) {
 function liveFams() { return project.families.filter(function (f) { return !f.deleted; }); }
 function ctxFor(f, over) {
   var y = f.date ? parseInt(f.date.slice(0, 4), 10) : NaN; if (isNaN(y)) y = new Date().getFullYear();
-  var o = { alias: !!f.alias, showNote: f.showNote !== false, condText: f.condText !== false, gen: f.gen !== false, refYear: y + 543, cm: GE.condMapFor(f), typed: !!f.typed, tcol: f.tcol || {}, pstyle: f.pstyle || 'both', adopt: f.adopt || 'caption', hhs: f.hhs || 'ellipse', hhc: f.hhc || '' };
+  var o = { alias: !!f.alias, showNote: f.showNote !== false, condText: f.condText !== false, gen: f.gen !== false, refYear: y + 543, cm: GE.condMapFor(f), typed: !!f.typed, tcol: f.tcol || {}, pstyle: f.pstyle || 'both', adopt: f.adopt || 'caption', hhs: f.hhs || 'ellipse', hhc: f.hhc || '', condFill: !!f.condFill, mono: !!f.mono, unk: f.unk !== false, unkBlank: !!f.unkBlank };
   for (var k in over || {}) o[k] = over[k];
   return o;
 }
@@ -249,6 +249,12 @@ function doDeleteMulti() {
 }
 function tidy(kind) {
   if (!state.persons.length) return; pushSnap(); var g = GE.gens(state), moved = 0;
+  if (kind === 'labels') {
+    var res = GE.autoLabels(state, ctxFor(fam)), m0 = ixOf();
+    Object.keys(res).forEach(function (id) { var q = m0[id]; if (!q) return; var nv = res[id]; if ((q.lp || '') !== nv) { if (nv) q.lp = nv; else delete q.lp; moved++; } });
+    draw(); save(); toast(moved ? 'จัดตำแหน่งข้อความใหม่ ' + moved + ' คน — ข้อความที่คุณลากเองไม่ถูกแตะ ย้อนกลับได้' : 'ตำแหน่งข้อความดีอยู่แล้ว', moved ? 'ย้อนกลับ' : null, undo);
+    return;
+  }
   if (kind === 'rows' || kind === 'both') {
     var y0 = Math.min.apply(null, state.persons.map(function (p) { return p.y; }));
     state.persons.forEach(function (p) { if (g[p.id] == null) return; var ny = y0 + g[p.id] * 160; if (ny !== p.y) { p.y = ny; moved++; } });
@@ -287,7 +293,7 @@ function renderMode() {
   var el = $('#modebar'); if (!el) return;
   if (!mode) { el.style.display = 'none'; return; }
   var m = ixOf(), h = '';
-  if (mode.kind === 'home') h = 'วงบ้านเดียวกัน — คลิกคนที่อยู่ด้วยกัน (เลือกแล้ว ' + mode.ids.length + ' คน) <button class="pri" data-act="homedone">เสร็จ</button><button data-act="cancel">ยกเลิก</button>';
+  if (mode.kind === 'home') h = 'วงบ้านเดียวกัน — คลิกคนที่อยู่ด้วยกัน (เลือกแล้ว ' + mode.ids.length + ' คน — คลิกซ้ำเพื่อเอาออก) <button class="pri" data-act="homedone">เสร็จ</button><button data-act="cancel">ยกเลิก</button>';
   else {
     var f = mode.from && m[mode.from], nm = f ? (GE.dispName(f, ctxFor(fam)) || 'คนที่เลือก') : '';
     h = '<b>' + esc(typeName(mode.type)) + '</b> — ' + (mode.from ? 'คลิก <u>คนที่สอง</u> (ต่อจาก ' + esc(nm) + ')' : 'คลิก <u>คนแรก</u>') + ' <button data-act="cancel">' + (mode.keep ? 'เสร็จ' : 'ยกเลิก') + '</button>';
@@ -317,12 +323,16 @@ function famPanel() {
     '<label class="ck"><input type="checkbox" data-fm="alias"' + (fam.alias ? ' checked' : '') + '> แสดง “ตัวย่อ” แทนชื่อจริง</label>' +
     '<label class="ck"><input type="checkbox" data-fm="gen"' + (fam.gen !== false ? ' checked' : '') + '> ป้ายรุ่น I, II, III</label>' +
     '<label class="ck"><input type="checkbox" data-fm="condText"' + (fam.condText !== false ? ' checked' : '') + '> ตัวย่อโรคใต้ชื่อ</label>' +
-    '<label class="ck"><input type="checkbox" data-fm="showNote"' + (fam.showNote !== false ? ' checked' : '') + '> หมายเหตุใต้ชื่อ</label></div>' +
+    '<label class="ck"><input type="checkbox" data-fm="showNote"' + (fam.showNote !== false ? ' checked' : '') + '> หมายเหตุใต้ชื่อ</label>' +
+    '<label class="ck"><input type="checkbox" data-fm="mono"' + (fam.mono ? ' checked' : '') + '> สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)</label>' +
+    '<label class="ck"><input type="checkbox" data-fm="condFill"' + (fam.condFill ? ' checked' : '') + '> ระบายลายโรคในสัญลักษณ์ (ปิดไว้ = โรคขึ้นเป็นตัวหนังสืออย่างเดียว)</label>' +
+    '<label class="ck"><input type="checkbox" data-fm="unk"' + (fam.unk !== false ? ' checked' : '') + '> ชื่อ “ไม่ทราบ” แสดงเป็น “ไม่ทราบ” (ไม่ย่อเป็น ม.)</label>' +
+    '<label class="ck"><input type="checkbox" data-fm="unkBlank"' + (fam.unkBlank ? ' checked' : '') + '> ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”</label></div>' +
     '<div class="sec"><div class="st">รูปแบบสัญลักษณ์</div>' +
-    '<label>ผู้ป่วย<select data-fm="pstyle">' + opt('both', 'ซ้อนสองชั้น + ลูกศร', fam.pstyle || 'both') + opt('double', 'ซ้อนสองชั้น (ไม่มีลูกศร — ใช้ลูกศรแทนผู้ให้ข้อมูล)', fam.pstyle) + '</select></label>' +
+    '<label>ผู้ป่วย<select data-fm="pstyle">' + opt('both', 'ซ้อนสองชั้น + ลูกศร', fam.pstyle || 'both') + opt('double', 'ซ้อนสองชั้น (ไม่มีลูกศร — ใช้ลูกศรแทนผู้ให้ข้อมูล)', fam.pstyle) + opt('arrow', 'ลูกศรชี้สัญลักษณ์ (ไม่ซ้อน — ตามคู่มือ)', fam.pstyle) + '</select></label>' +
     '<label>ลูกบุญธรรม<select data-fm="adopt">' + opt('caption', 'ป้าย “บุตรบุญธรรม (adopted)” ตามคู่มือ', fam.adopt || 'caption') + opt('bracket', 'วงเล็บครอบ (แบบสากล)', fam.adopt) + '</select></label>' +
-    '<label>กรอบสมาชิกบ้านเดียวกัน<select data-fm="hhs">' + opt('ellipse', 'วงรี (ตามคู่มือ)', fam.hhs || 'ellipse') + opt('round', 'กล่องมุมมน (แบบเขต 7, 9)', fam.hhs) + '</select></label>' +
-    '<label>สีกรอบ <input type="color" data-fm="hhc" value="' + (fam.hhc || '#234e8c') + '" style="width:44px;height:28px;padding:0;display:inline-block;vertical-align:middle"> <button type="button" data-act="hhcclear" style="padding:2px 8px;font-size:12px">ค่าเดิม</button></label></div>' +
+    '<label>กรอบสมาชิกบ้านเดียวกัน<select data-fm="hhs">' + opt('ellipse', 'วงรี (ตามคู่มือ)', fam.hhs || 'ellipse') + opt('round', 'กล่องมุมมน (แบบเขต 7, 9)', fam.hhs) + opt('hug', 'โค้งตามสมาชิก (อ้อมคนอื่น เหมาะบ้านที่มีหลายรุ่น)', fam.hhs) + '</select></label>' +
+    '<label>สีกรอบ <input type="color" data-fm="hhc" value="' + (fam.hhc || '#234e8c') + '" style="width:44px;height:28px;padding:0;display:inline-block;vertical-align:middle"> <button type="button" data-act="hhcclear" style="padding:2px 8px;font-size:12px">ค่าเดิม</button></label><div class="btns" style="margin:4px 0"><button type="button" data-act="autohomes">สร้างวงบ้านอัตโนมัติจาก “บ้านเลขที่ …” ในช่อง ย้ายถิ่น</button></div></div>' +
     '<div class="sec"><div class="st">สีข้อความ</div><label class="ck"><input type="checkbox" data-fm="typed"' + (fam.typed ? ' checked' : '') + '> แยกสีตามชนิดข้อมูล (แบบเขต 7)</label>' +
     (fam.typed ? '<div class="tcs">' + GE.TEXT_KINDS.map(function (t) { return '<label class="tc"><input type="color" data-tc="' + t.k + '" value="' + ((fam.tcol || {})[t.k] || t.c) + '"> ' + esc(t.n) + '</label>'; }).join('') + '<button type="button" data-act="tcreset" style="padding:2px 8px;font-size:12px">คืนสีมาตรฐาน</button></div>' : '<p class="mut" style="font-size:12px">เปิดแล้ว ชื่อ/อาชีพ/โรค/พฤติกรรมเสี่ยง/สาเหตุการตายจะคนละสี และมีคำอธิบายสีในรูปที่ส่งออก</p>') + '</div>' +
     addBtns() +
@@ -338,7 +348,7 @@ function renderPanel() {
   } else if (mode && mode.kind === 'link') {
     h += '<div class="sec"><div class="st">กำลังเชื่อม</div><p class="mut">คลิกคนที่ต้องการเชื่อมบนผัง</p><div class="btns"><button data-act="cancel">ยกเลิก</button></div></div>';
   } else if (nm > 1 || (nm === 1 && !s)) {
-    h += '<div class="sec"><div class="st">เลือกไว้ ' + nm + ' คน</div><p class="mut">ลากคนใดคนหนึ่งเพื่อย้ายทั้งกลุ่ม</p><div class="btns"><button data-act="malign">จัดให้อยู่แนวเดียวกัน</button><button data-act="mdist">เว้นระยะเท่ากัน</button></div>' +
+    h += '<div class="sec"><div class="st">เลือกไว้ ' + nm + ' คน</div><p class="mut">ลากคนใดคนหนึ่งเพื่อย้ายทั้งกลุ่ม</p><div class="btns"><button data-act="malign">จัดให้อยู่แนวเดียวกัน</button><button data-act="mdist">เว้นระยะเท่ากัน</button></div><div class="btns"><button class="pri" data-act="mhome">ทำวงสมาชิกที่อยู่ด้วยกัน (' + nm + ' คน)</button></div>' +
       '<div class="sw">' + GE.FILLS.map(function (c, i) { return '<button class="swb" data-act="mcolor" data-v="' + i + '" title="' + GE.FILL_NAMES[i] + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
       '<div class="btns"><button data-act="mclear">ยกเลิกการเลือก</button><button class="dng" data-act="mdel">ลบ ' + nm + ' คน</button></div></div>';
   } else if (!s) {
@@ -350,6 +360,7 @@ function renderPanel() {
       '<label>ตัวย่อ (ใช้ในรายงาน)<span style="display:flex;gap:6px"><input data-f="alias" value="' + esc(p.alias || '') + '" placeholder="' + esc(p.name ? GE.autoAlias(p.name) : 'เช่น ส.ด.') + '" style="margin-top:2px"><button type="button" data-act="autoalias" style="margin-top:2px;white-space:nowrap">ตั้งอัตโนมัติ</button></span></label>' +
       '<div class="two"><label>' + (dead ? 'อายุเมื่อเสียชีวิต (ปี)' : 'อายุ (ปี)') + '<input data-f="age" value="' + esc(p.age || '') + '" placeholder="เช่น 45" inputmode="numeric"></label>' +
       '<label>ปีเกิด (พ.ศ.)<input data-f="byr" value="' + esc(p.byr || '') + '" placeholder="เช่น 2512" inputmode="numeric"></label></div>' +
+      '<div class="btns" style="margin:0 0 4px"><button type="button" data-act="unkname">ไม่ทราบชื่อ</button><button type="button" data-act="unkage">ไม่ทราบอายุ</button></div>' +
       '<p class="mut" style="margin:-2px 0 6px;font-size:12px">ใส่ปีเกิดอย่างเดียวก็ได้ — ระบบคำนวณอายุจากวันที่เก็บข้อมูลให้</p>' +
       '<div class="two"><label>เพศ<select data-f="sex">' + opt('M', 'ชาย', p.sex) + opt('F', 'หญิง', p.sex) + opt('U', 'ไม่ทราบเพศ', p.sex) + '</select></label>' +
       '<label>สถานะ<select data-f="st">' + Object.keys(GE.STS).map(function (k) { return opt(k, GE.STS[k], p.st || ''); }).join('') + '</select></label></div>' +
@@ -361,7 +372,8 @@ function renderPanel() {
       '<label>พฤติกรรมเสี่ยง<input data-f="risk" value="' + esc(p.risk || '') + '" placeholder="เช่น ไม่ออกกำลังกาย กินเค็ม"></label>' +
       '<div class="chk"><label><input type="checkbox" data-f="inf"' + (p.inf ? ' checked' : '') + '> ผู้ให้ข้อมูล (ลูกศรชี้)</label><label><input type="checkbox" data-f="key"' + (p.key ? ' checked' : '') + '> ผู้ให้ข้อมูลหลัก (ระบายเหลือง)</label></div></div>' +
       '<div class="sec"><div class="st">โรค / ภาวะสุขภาพ</div><div class="chips">' + Object.keys(cm).map(function (k) { var on = (p.cond || []).indexOf(k) >= 0; return '<button class="chip' + (on ? ' on' : '') + '" data-act="cond" data-v="' + k + '" title="' + esc(cm[k].n) + '">' + esc(cm[k].t) + '</button>'; }).join('') + '</div>' +
-      ((p.cond || []).length > 3 ? '<p class="mut" style="color:#b26a00">แสดงบนสัญลักษณ์ได้ 3 อย่างแรก (ที่เหลือยังขึ้นเป็นตัวหนังสือ)</p>' : '<p class="mut" style="font-size:12px">แต่ละโรคจะเป็นลายระบายในสัญลักษณ์ (พิมพ์ขาวดำก็แยกได้)</p>') + '</div>' +
+      '<label>โรคอื่นๆ (พิมพ์เอง ขึ้นเป็นตัวหนังสือสีเดียวกับโรคอื่น)<textarea data-f="dz" rows="2" placeholder="เช่น ไขมันในเลือดสูง, เก๊าท์ (คั่นด้วย , หรือขึ้นบรรทัดใหม่)">' + esc(p.dz || '') + '</textarea></label>' +
+      (fam.condFill ? '<div class="chk"><label><input type="checkbox" data-f="nofill"' + (p.nofill ? ' checked' : '') + '> ไม่ระบายลายโรคในสัญลักษณ์ของคนนี้</label></div>' + ((p.cond || []).length > 3 ? '<p class="mut" style="color:#b26a00">ลายแสดงบนสัญลักษณ์ได้ 3 อย่างแรก (ที่เหลือยังขึ้นเป็นตัวหนังสือ)</p>' : '') : '<p class="mut" style="font-size:12px">โรคขึ้นเป็นตัวหนังสือใต้ชื่อเท่านั้น (เปิดลายได้ที่แผง “ข้อมูลผังนี้” คลิกพื้นที่ว่าง)</p>') + '</div>' +
       '<div class="sec"><label>หมายเหตุ<textarea data-f="note" rows="2" placeholder="ข้อความเพิ่มเติมใต้ชื่อ">' + esc(p.note || '') + '</textarea></label>' +
       '<div class="sw">' + GE.FILLS.map(function (c, i) { return '<button class="swb' + ((p.c || 0) === i ? ' on' : '') + '" data-act="color" data-v="' + i + '" title="' + GE.FILL_NAMES[i] + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
       '<label>ตำแหน่งชื่อ<select data-f="lp">' + opt('', 'อัตโนมัติ', p.lp || '') + opt('b', 'ใต้สัญลักษณ์', p.lp) + opt('t', 'เหนือสัญลักษณ์', p.lp) + opt('l', 'ซ้าย', p.lp) + opt('r', 'ขวา', p.lp) + '</select></label></div>' +
@@ -373,6 +385,7 @@ function renderPanel() {
       '<div class="sec"><div class="st">เพิ่มญาติ</div><div class="btns">' +
       '<button data-act="spouse">+ คู่สมรส</button><button data-act="child" data-v="M">+ ลูกชาย</button><button data-act="child" data-v="F">+ ลูกหญิง</button>' +
       '<button data-act="parents"' + (p.from ? ' disabled' : '') + '>+ พ่อแม่</button><button data-act="sib" data-v="M">+ พี่น้องชาย</button><button data-act="sib" data-v="F">+ พี่น้องหญิง</button></div></div>' +
+      '<div class="sec"><div class="st">อยู่บ้านเดียวกัน</div><div class="btns"><button data-act="homefrom">เริ่มวงจากคนนี้ (แล้วคลิกคนอื่นเพิ่ม)</button></div></div>' +
       '<div class="sec"><div class="st">เชื่อมกับคนอื่น</div><select id="linktype" style="width:100%;max-width:none">' + linkOptions() + '</select><div class="btns"><button class="pri" data-act="link">เลือกคนที่จะเชื่อม</button>' + (p.tw ? '<button data-act="untwin">ยกเลิกแฝด</button>' : '') + '</div></div>' +
       '<div class="sec"><button class="dng" data-act="del">ลบคนนี้</button></div>';
   } else if (sel.k === 't') {
@@ -396,7 +409,10 @@ function renderPanel() {
       '<p class="mut">ลากจุดวงกลมสีส้มกลางเส้นเพื่อปรับความโค้ง</p>' +
       '<div class="btns" style="margin-top:8px"><button data-act="swap">สลับทิศลูกศร</button><button data-act="straight">ทำให้ตรง</button></div></div><div class="sec"><button class="dng" data-act="del">ลบเส้นนี้</button></div>';
   } else {
-    h += '<div class="sec"><div class="st">วงสมาชิกที่อยู่ด้วยกัน</div><button class="dng" data-act="del">ลบวงนี้</button></div>';
+    var hm = ixOf(), mem = (s.ids || []).map(function (i) { return hm[i] ? (GE.dispName(hm[i], ctxFor(fam)) || 'ไม่มีชื่อ') : null; }).filter(Boolean);
+    h += '<div class="sec"><div class="st">วงสมาชิกที่อยู่ด้วยกัน</div><p class="mut">สมาชิก ' + mem.length + ' คน: ' + esc(mem.join(', ')) + '</p><div class="btns"><button data-act="homeedit">แก้สมาชิก (คลิกคนเพิ่ม/เอาออก)</button><button class="dng" data-act="del">ลบวงนี้</button></div>' +
+      '<label>ป้ายชื่อบ้าน (ขึ้นเหนือวง)<input data-f="label" value="' + esc(s.label || '') + '" placeholder="เช่น บ้านเลขที่ 32"></label>' +
+      (GE.homeOutsiders(state, s) ? '<div class="warnbox">วงนี้ทับคนนอกบ้าน ' + GE.homeOutsiders(state, s) + ' คน — ลองเลือกกรอบ “โค้งตามสมาชิก” ในแผงผัง หรือลากคนให้อยู่ใกล้กัน</div>' : '') + '</div>';
   }
   panel.querySelector('#dyn').innerHTML = h; renderMode();
   refreshLegend();
@@ -412,6 +428,7 @@ function bindPanel() {
     var t = e.target; if (!t.matches) return;
     if (t.matches('[data-fm]')) {
       var k = t.getAttribute('data-fm'); fam[k] = t.type === 'checkbox' ? t.checked : t.value;
+      if (k === 'condFill' || k === 'mono' || k === 'unk' || k === 'unkBlank') { fam.exp = fam.exp || {}; fam.exp[k] = fam[k]; }
       if (k === 'title' || k === 'house') fillFamSel();
       refreshLegend(true); draw(); save(); if (k === 'typed') renderPanel(); return;
     }
@@ -446,7 +463,16 @@ function onAct(e) {
   if (act === 'bkopen') { openBackup(); return; }
   if (act === 'new') { pushSnap(); var p = addPerson(v, freeSpot(ctr_.x, ctr_.y), ctr_.y); sel = { k: 'p', id: p.id }; }
   else if (act === 'homemode') { mode = { kind: 'home', ids: [] }; }
-  else if (act === 'homedone') { if (mode.ids.length) { pushSnap(); var h = { id: newId('h'), ids: mode.ids.slice() }; state.homes.push(h); sel = { k: 'h', id: h.id }; } mode = null; }
+  else if (act === 'homefrom' && s) { mode = { kind: 'home', ids: [s.id] }; sel = null; }
+  else if (act === 'homeedit' && s) { mode = { kind: 'home', ids: s.ids.slice(), edit: s.id }; sel = null; }
+  else if (act === 'mhome') { var mids = Object.keys(msel); if (mids.length) { pushSnap(); var mh = { id: newId('h'), ids: mids }; state.homes.push(mh); msel = {}; sel = { k: 'h', id: mh.id }; toast('สร้างวงสมาชิกที่อยู่ด้วยกันแล้ว (' + mids.length + ' คน)'); } }
+  else if (act === 'unkname' && s) { pushSnap(); s.name = 'ไม่ทราบ'; delete s.alias; }
+  else if (act === 'unkage' && s) { pushSnap(); s.age = 'ไม่ทราบ'; delete s.byr; }
+  else if (act === 'homedone') {
+    if (mode.edit) { var eh = state.homes.filter(function (z) { return z.id === mode.edit; })[0]; if (eh) { pushSnap(); if (mode.ids.length) { eh.ids = mode.ids.slice(); sel = { k: 'h', id: eh.id }; } else { state.homes = state.homes.filter(function (z) { return z.id !== eh.id; }); sel = null; } } }
+    else if (mode.ids.length) { pushSnap(); var h = { id: newId('h'), ids: mode.ids.slice() }; state.homes.push(h); sel = { k: 'h', id: h.id }; }
+    mode = null;
+  }
   else if (act === 'cancel') { mode = null; }
   else if (act === 'color' && s) { pushSnap(); s.c = +v; }
   else if (act === 'cond' && s) { pushSnap(); var a = s.cond || []; var i = a.indexOf(v); if (i >= 0) a.splice(i, 1); else a.push(v); if (a.length) s.cond = a; else delete s.cond; }
@@ -455,6 +481,13 @@ function onAct(e) {
   else if (act === 'lcclear' && s) { pushSnap(); delete s.lc; }
   else if (act === 'lreset' && s) { pushSnap(); delete s.lo; }
   else if (act === 'hhcclear') { fam.hhc = ''; refreshLegend(true); }
+  else if (act === 'autohomes') {
+    var grp = {}; state.persons.forEach(function (p) { var mm = /(?:บ้านเลขที่|เลขที่)\s*([0-9]+(?:\/[0-9]+)?)/.exec(p.mig || ''); if (mm) (grp[mm[1]] = grp[mm[1]] || []).push(p.id); });
+    var made = 0, nums = Object.keys(grp).filter(function (k) { return grp[k].length > 1; });
+    nums.forEach(function (k) { var ids = grp[k]; if (state.homes.some(function (z) { return z.ids.length === ids.length && ids.every(function (i) { return z.ids.indexOf(i) >= 0; }); })) return; if (!made) pushSnap(); state.homes.push({ id: newId('h'), ids: ids.slice(), label: 'บ้านเลขที่ ' + k }); made++; });
+    toast(made ? 'สร้างวงบ้านจากบ้านเลขที่ ' + made + ' วง (ตรวจดูแล้วแก้สมาชิกได้)' : (nums.length ? 'มีวงบ้านครบแล้ว' : 'ไม่พบ “บ้านเลขที่ …” ซ้ำกันในช่อง ย้ายถิ่น'));
+    if (made && fam.hhs !== 'hug') { fam.hhs = 'hug'; }
+  }
   else if (act === 'tcreset') { fam.tcol = {}; refreshLegend(true); }
   else if (act === 'autoalias' && s) { pushSnap(); s.alias = GE.autoAlias(s.name); }
   else if (act === 'spouse' && s) { pushSnap(); addSpouse(s); }
@@ -657,7 +690,7 @@ function makeSample() {
 var PAPERS = { a4l: { n: 'A4 แนวนอน', w: 297, h: 210 }, a4p: { n: 'A4 แนวตั้ง', w: 210, h: 297 }, a3l: { n: 'A3 แนวนอน', w: 420, h: 297 }, a3p: { n: 'A3 แนวตั้ง', w: 297, h: 420 }, auto: { n: 'ตามขนาดผัง (ไม่กำหนดกระดาษ)', w: 0, h: 0 } };
 function expOpts() {
   var e = fam.exp = fam.exp || {};
-  var d = { title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true };
+  var d = { title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true, mode: 'single', bookPt: 8, longPt: 6, condFill: !!fam.condFill, mono: !!fam.mono, unk: fam.unk !== false, unkBlank: !!fam.unkBlank };
   for (var k in d) if (e[k] === undefined) e[k] = d[k];
   return e;
 }
@@ -669,7 +702,7 @@ function measure(inner) {
   t.remove(); return { x: bb.x, y: bb.y, w: bb.width, h: bb.height };
 }
 function buildExport(o) {
-  var ctx = ctxFor(fam, { alias: o.alias, gen: o.gen, pre: 'x_', nosel: true });
+  var ctx = ctxFor(fam, { alias: o.alias, gen: o.gen, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, pre: 'x_', nosel: true });
   var content = GE.inner(state, ctx), bb = measure(content);
   var lmode = o.legendMode || (o.legend === false ? 'none' : 'used'), padv = 26, items = lmode === 'none' ? [] : GE.legendItems(state, ctx, lmode), cw = Math.max(bb.w, 560), parts = '', y = padv;
   var title = o.title && fam.title ? fam.title : '', sub = [];
@@ -695,24 +728,325 @@ function buildExport(o) {
   function build(wA, hA) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + Ht + '" width="' + wA + '" height="' + hA + '" font-family="' + GE.FONT.replace(/"/g, "'") + '"><style>' + fontCss() + '</style><rect width="' + W + '" height="' + Ht + '" fill="#fff"/>' + parts + '</svg>'; }
   var P = PAPERS[o.paper] || PAPERS.auto, s = null, minPt = null, A = P.w ? P : PAPERS.a4l;
   if (P.w) { s = Math.min((P.w - 2 * o.margin) / W, (P.h - 2 * o.margin) / Ht, 0.35); minPt = 12.5 * s * 72 / 25.4; }
-  var miss = state.persons.filter(function (p) { return p.name && !String(p.alias || '').trim(); }).length;
+  var miss = state.persons.filter(function (p) { return p.name && !(o.unk !== false && GE.isUnk(p.name)) && !String(p.alias || '').trim(); }).length;
   return { build: build, W: W, H: Ht, s: s, minPt: minPt, paper: P, A: A, missingAlias: miss, svg: build(W, Ht) };
+}
+/* ================= book export: 1 overview page + readable detail pages ================= */
+function genRowLabels(st) {
+  var g = GE.gens(st), rows = {};
+  st.persons.forEach(function (p) { var v = g[p.id]; if (v != null) (rows[v] = rows[v] || []).push(p.y); });
+  return Object.keys(rows).map(function (k) { var ys = rows[k]; return { y: ys.reduce(function (a, b) { return a + b; }, 0) / ys.length, t: GE.ROMAN[+k] || String(+k + 1) }; });
+}
+function tileCuts(boxes, pairs, mp, x0, x1, capW) {
+  var cuts = [x0], start = x0;
+  while (x1 - start > capW + 1) {
+    var end = start + capW, best = end, bs = -1e18;
+    for (var c = end; c >= start + capW * 0.5; c -= 3) {
+      var sc = 0, i;
+      for (i = 0; i < boxes.length; i++) if (boxes[i].x0 < c && boxes[i].x1 > c) sc -= 500;
+      for (i = 0; i < pairs.length; i++) { var a = mp[pairs[i][0]], b = mp[pairs[i][1]]; if (a && b && Math.min(a.x, b.x) < c && Math.max(a.x, b.x) > c) sc -= 200; }
+      sc -= (end - c) * 1.3;
+      if (sc > bs) { bs = sc; best = c; }
+    }
+    cuts.push(best); start = best;
+  }
+  cuts.push(x1); return cuts;
+}
+function buildBook(o) {
+  var one = o.mode === 'one', P = (PAPERS[o.paper] && PAPERS[o.paper].w) ? PAPERS[o.paper] : PAPERS.a4l, m = Math.max(5, +o.margin || 12), minPt = Math.max(5, +o.bookPt || 8);
+  var base = { alias: o.alias, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, nosel: true };
+  var ctx = ctxFor(fam, Object.assign({ gen: false, pre: 'x_' }, base)), ctxO = ctxFor(fam, Object.assign({ gen: true, pre: 'x_' }, base));
+  var content = GE.inner(state, ctx), bb = measure(content), PADU = 24;
+  bb = { x: bb.x - PADU, y: bb.y - PADU, w: bb.w + 2 * PADU, h: bb.h + 2 * PADU };
+  var boxes = GE.personBoxes(state, ctx), segs = GE.lineSegs(state), mp = ixOf(), pairs = state.unions.filter(function (u) { return u.a && u.b; }).map(function (u) { return [u.a, u.b]; });
+  var HDR = 11, FTR = 7, GUT = 10, title = fam.title || 'ผังเครือญาติ';
+  var Wmm = P.w - 2 * m - GUT, Hmm = P.h - 2 * m - HDR - FTR;
+  var s = minPt * 25.4 / 72 / 12.5, cuts, tiles, it;
+  function tileWin(c0, c1) {
+    var y0 = 1e9, y1 = -1e9;
+    boxes.forEach(function (b) { if (b.x1 > c0 && b.x0 < c1) { y0 = Math.min(y0, b.y0); y1 = Math.max(y1, b.y1); } });
+    segs.forEach(function (g) { if (Math.max(g[0], g[2]) > c0 && Math.min(g[0], g[2]) < c1) { y0 = Math.min(y0, g[1], g[3]); y1 = Math.max(y1, g[1], g[3]); } });
+    if (y0 > y1) { y0 = bb.y; y1 = bb.y + bb.h; }
+    return { y0: y0 - PADU, y1: y1 + PADU };
+  }
+  for (it = 0; it < 5; it++) {
+    cuts = tileCuts(boxes, pairs, mp, bb.x, bb.x + bb.w, Wmm / s);
+    tiles = []; var maxH = 0;
+    for (var i = 0; i + 1 < cuts.length; i++) { var w = tileWin(cuts[i], cuts[i + 1]); tiles.push({ c0: cuts[i], c1: cuts[i + 1], y0: w.y0, y1: w.y1 }); maxH = Math.max(maxH, w.y1 - w.y0); }
+    var sNew = Math.min(minPt * 25.4 / 72 / 12.5, Hmm / maxH);
+    if (Math.abs(sNew - s) < 1e-6) break; s = sNew;
+  }
+  tiles.forEach(function (t, i) {
+    t.e0 = t.c0; t.e1 = t.c1;
+    if (i > 0) boxes.forEach(function (b) { if (b.x0 < t.c0 && b.x1 > t.c0 && t.c0 - b.x0 < 140) t.e0 = Math.min(t.e0, b.x0 - 2); });
+    if (i < tiles.length - 1) boxes.forEach(function (b) { if (b.x0 < t.c1 && b.x1 > t.c1 && b.x1 - t.c1 < 140) t.e1 = Math.max(t.e1, b.x1 + 2); });
+  });
+  var ptEff = 12.5 * s * 72 / 25.4, N = tiles.length, sTxt = minPt * 25.4 / 72 / 12.5;
+  var font = GE.FONT.replace(/"/g, "'");
+  function wrap(inner, wA, hA, withFont) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + P.w + ' ' + P.h + '" width="' + wA + '" height="' + hA + '" font-family="' + font + '">' + (withFont ? '<style>' + fontCss() + '</style>' : '') + '<rect width="' + P.w + '" height="' + P.h + '" fill="#fff"/>' + inner + '</svg>'; }
+  function head(pg, tot, sub) {
+    return '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>' +
+      (sub ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') +
+      '<text x="' + (P.w - m) + '" y="' + (m + 5) + '" text-anchor="end" font-size="3.6" fill="#4a5d80">หน้า ' + pg + ' / ' + tot + '</text>';
+  }
+  var sub = [fam.house ? 'บ้านเลขที่ ' + fam.house : '', fam.place || '', fam.date ? 'ข้อมูล ณ วันที่ ' + thaiDate(fam.date) : ''].filter(Boolean).join('   ·   ');
+  var total = one ? 1 : (N > 1 ? N + 1 : 1), pages = [], ovPt = null;
+  /* ---- overview ---- */
+  if (N > 1 || one) {
+    var cO = GE.inner(state, ctxO), bo = measure(cO), items = (o.legendMode === 'none') ? [] : GE.legendItems(state, ctxO, o.legendMode || 'used');
+    var sl = one ? sTxt * 0.5 : sTxt, capL = (P.w - 2 * m) / sl, lx = 0, ly = 0, RH = 46, lg = '';
+    var legY0 = 0, rowsPos = [];
+    items.forEach(function (it2) { var w2 = 66 + 8 + Math.min(300, it2.label.length * 7.4) + 22; if (lx > 0 && lx + w2 > capL) { lx = 0; ly += RH; } rowsPos.push([lx, ly, it2]); lx += w2; });
+    var legH = items.length ? (ly + RH) * sl + 8 : 0;
+    var Ho = P.h - 2 * m - HDR - FTR - legH - 3, Wo = P.w - 2 * m, bestK = 1, so = 0, GAPS = 4, k, kcuts, kwin;
+    var boxesO = GE.personBoxes(state, ctxO);
+    function evenCuts(kk) {
+      var cs = [bo.x], span = bo.w / kk;
+      for (var j = 1; j < kk; j++) {
+        var ideal = bo.x + span * j, best = ideal, bs = -1e18;
+        for (var c = ideal - 0.12 * span; c <= ideal + 0.12 * span; c += 3) {
+          var sc = -Math.abs(c - ideal) * 1.3, i;
+          for (i = 0; i < boxesO.length; i++) if (boxesO[i].x0 < c && boxesO[i].x1 > c) sc -= 500;
+          for (i = 0; i < pairs.length; i++) { var pa = mp[pairs[i][0]], pb = mp[pairs[i][1]]; if (pa && pb && Math.min(pa.x, pb.x) < c && Math.max(pa.x, pb.x) > c) sc -= 200; }
+          if (sc > bs) { bs = sc; best = c; }
+        }
+        cs.push(best);
+      }
+      cs.push(bo.x + bo.w); return cs;
+    }
+    for (k = 1; k <= (one ? 7 : 5); k++) {
+      var cc = evenCuts(k), wins = [], wmax = 0, sumH = 0;
+      for (var q = 0; q < k; q++) { var wq = tileWin(cc[q], cc[q + 1]); wins.push(wq); wmax = Math.max(wmax, cc[q + 1] - cc[q]); sumH += wq.y1 - wq.y0; }
+      var sK = Math.min(Wo / wmax, (Ho - GAPS * (k - 1)) / sumH);
+      if (sK > so) { so = sK; bestK = k; kcuts = cc; kwin = wins; }
+    }
+    var strips = '', yoff = 0;
+    for (k = 0; k < bestK; k++) {
+      var a0 = kcuts[k], a1 = kcuts[k + 1], wn = kwin[k], hh = (wn.y1 - wn.y0) * so, tx = m + (Wo - (a1 - a0) * so) / 2 - a0 * so, ty = m + HDR + yoff - wn.y0 * so, cidO = 'ovc' + k;
+      var fr = '';
+      if (!one) tiles.forEach(function (t, i) {
+        var x0 = Math.max(t.c0, a0), x1 = Math.min(t.c1, a1); if (x1 <= x0) return;
+        var fs = 3.4 / so;
+        fr += '<rect x="' + x0 + '" y="' + t.y0 + '" width="' + (x1 - x0) + '" height="' + (t.y1 - t.y0) + '" fill="rgba(232,89,12,.06)" stroke="#e8590c" stroke-width="' + (0.35 / so) + '" stroke-dasharray="' + (1.8 / so) + ' ' + (1.1 / so) + '"/>' +
+          '<text x="' + (x0 + 1 / so) + '" y="' + (t.y0 + fs * 1.0) + '" font-size="' + fs + '" font-weight="700" fill="#e8590c" paint-order="stroke" stroke="#fff" stroke-width="' + (0.7 / so) + '">หน้า ' + (i + 2) + '</text>';
+      });
+      strips += '<defs><clipPath id="' + cidO + '"><rect x="' + a0 + '" y="' + wn.y0 + '" width="' + (a1 - a0) + '" height="' + (wn.y1 - wn.y0) + '"/></clipPath></defs><g transform="translate(' + tx.toFixed(3) + ',' + ty.toFixed(3) + ') scale(' + so.toFixed(5) + ')"><g clip-path="url(#' + cidO + ')">' + cO + fr + '</g></g>' +
+        (bestK > 1 ? '<text x="' + (P.w - m) + '" y="' + (m + HDR + yoff - 0.6) + '" text-anchor="end" font-size="2.4" fill="#9aa7c0">แถวที่ ' + (k + 1) + '/' + bestK + (k < bestK - 1 ? ' — ต่อแถวถัดไป' : '') + '</text>' : '');
+      yoff += hh + GAPS;
+    }
+    ovPt = 12.5 * so * 72 / 25.4;
+    var ovInner = head(1, total, sub) + strips;
+    if (items.length) {
+      var gy = P.h - m - FTR - legH + 3;
+      ovInner += '<line x1="' + m + '" y1="' + (gy - 2) + '" x2="' + (P.w - m) + '" y2="' + (gy - 2) + '" stroke="#d6d0bd" stroke-width="0.25"/>';
+      rowsPos.forEach(function (r) { ovInner += '<g transform="translate(' + (m + r[0] * sl).toFixed(2) + ',' + (gy + r[1] * sl).toFixed(2) + ') scale(' + sl.toFixed(5) + ')">' + r[2].svg + '<text x="74" y="27" font-size="12.5" fill="#1f2a44">' + esc(r[2].label) + '</text></g>'; });
+    }
+    ovInner += '<text x="' + (P.w / 2) + '" y="' + (P.h - m - 1) + '" text-anchor="middle" font-size="2.8" fill="#6b7280">' + (one ? 'ผังทั้งหมดในหน้าเดียว · ตัวหนังสือเล็กสุด ≈ ' + ovPt.toFixed(1) + ' pt บนกระดาษ — ซูมในไฟล์ PDF เพื่ออ่านรายละเอียด (เวกเตอร์ ไม่แตก)' : 'ภาพรวมทั้งผัง · กรอบสีส้มคือส่วนที่แสดงในแต่ละหน้า · ตัวหนังสือในหน้านี้เล็ก ดูรายละเอียดที่หน้า 2–' + total + ' (หรือซูมในไฟล์ PDF)') + '</text>';
+    pages.push({ kind: 'overview', build: function (w, h, f) { return wrap(ovInner, w, h, f); } });
+  }
+  /* ---- detail pages ---- */
+  var gl = genRowLabels(state);
+  if (!one) tiles.forEach(function (t, i) {
+    var th = t.y1 - t.y0, x0m = m + GUT, y0m = m + HDR, cid = 'bkc' + i, pg = (N > 1 ? i + 2 : 1);
+    var tf = 'translate(' + (x0m - t.c0 * s).toFixed(3) + ',' + (y0m - t.y0 * s).toFixed(3) + ') scale(' + s.toFixed(5) + ')';
+    var fsz = 12.5, marks = '', seen = {};
+    function mark(y, txt, left) { var k = Math.round(y / 14); if (seen[(left ? 'L' : 'R') + k]) return; seen[(left ? 'L' : 'R') + k] = 1; marks += '<text x="' + (left ? t.c0 + 3 : t.c1 - 3) + '" y="' + (y - 4) + '" text-anchor="' + (left ? 'start' : 'end') + '" font-size="' + fsz + '" font-weight="600" fill="#e8590c" paint-order="stroke" stroke="#fff" stroke-width="3" stroke-linejoin="round">' + txt + '</text>'; }
+    segs.forEach(function (g) { if (Math.abs(g[1] - g[3]) > 1) return; var xa = Math.min(g[0], g[2]), xb = Math.max(g[0], g[2]), y = g[1]; if (y < t.y0 || y > t.y1) return; if (i < N - 1 && xa < t.c1 && xb > t.c1) mark(y, 'ต่อหน้า ' + (pg + 1) + ' ▶', false); if (i > 0 && xa < t.c0 && xb > t.c0) mark(y, '◀ ต่อจากหน้า ' + (pg - 1), true); });
+    var gtxt = gl.filter(function (r) { return r.y > t.y0 && r.y < t.y1; }).map(function (r) { return '<text x="' + (t.c0 - GUT / 2 / s) + '" y="' + (r.y + 6) + '" text-anchor="middle" font-size="19" font-weight="600" fill="#7a8bab">' + r.t + '</text>'; }).join('');
+    var inner = head(pg, total, sub) +
+      '<defs><clipPath id="' + cid + '"><rect x="' + t.e0 + '" y="' + t.y0 + '" width="' + (t.e1 - t.e0) + '" height="' + th + '"/></clipPath></defs>' +
+      '<g transform="' + tf + '">' + (o.gen !== false ? gtxt : '') + '<g clip-path="url(#' + cid + ')">' + content + marks + '</g></g>' +
+      '<text x="' + (P.w / 2) + '" y="' + (P.h - m - 1) + '" text-anchor="middle" font-size="2.8" fill="#6b7280">' + (N > 1 ? 'สัญลักษณ์ดูหน้า 1 · ' : '') + 'ตัวหนังสือเล็กสุด ≈ ' + ptEff.toFixed(1) + ' pt</text>';
+    pages.push({ kind: 'detail', build: function (w, h, f) { return wrap(inner, w, h, f); } });
+  });
+  var miss = state.persons.filter(function (p) { return p.name && !(o.unk !== false && GE.isUnk(p.name)) && !String(p.alias || '').trim(); }).length;
+  return { book: true, one: one, ovPt: ovPt, pages: pages, P: P, N: N, total: total, ptEff: ptEff, ptWant: minPt, shrunk: ptEff < minPt * 0.95, missingAlias: miss, cuts: cuts, tiles: tiles, straddle: cuts.slice(1, -1).map(function (c) { return boxes.filter(function (b) { return b.x0 < c && b.x1 > c; }).length; }) };
+}
+/* ---- one long row on an extra-wide custom page (PDF only: zoom or draw over it on a tablet) ---- */
+function buildLong(o) {
+  var m = Math.max(5, +o.margin || 12), pt = Math.max(3, +o.longPt || 6), s = pt * 25.4 / 72 / 12.5;
+  var base = { alias: o.alias, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, nosel: true };
+  var ctxO = ctxFor(fam, Object.assign({ gen: o.gen !== false, pre: 'x_' }, base));
+  var cO = GE.inner(state, ctxO), bo = measure(cO), PAD = 20, title = fam.title || 'ผังเครือญาติ';
+  var HDR = 11, FTR = 7;
+  var items = (o.legendMode === 'none') ? [] : GE.legendItems(state, ctxO, o.legendMode || 'used');
+  var capL = Math.min(bo.w, 1400), lx = 0, ly = 0, RH = 46, rowsPos = [];
+  items.forEach(function (it) { var w = 66 + 8 + Math.min(300, it.label.length * 7.4) + 22; if (lx > 0 && lx + w > capL) { lx = 0; ly += RH; } rowsPos.push([lx, ly, it]); lx += w; });
+  var legH = items.length ? (ly + RH) * s + 8 : 0;
+  var W = Math.round(bo.w * s + 2 * m + 2 * PAD * s), H = Math.round(HDR + bo.h * s + legH + FTR + 2 * m + 4);
+  var P = { w: W, h: H, n: 'ยาวพิเศษ' }, font = GE.FONT.replace(/"/g, "'");
+  var sub = [fam.house ? 'บ้านเลขที่ ' + fam.house : '', fam.place || '', fam.date ? 'ข้อมูล ณ วันที่ ' + thaiDate(fam.date) : ''].filter(Boolean).join('   ·   ');
+  var inner = '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>' + (sub ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') +
+    '<g transform="translate(' + (m + PAD * s - bo.x * s).toFixed(3) + ',' + (m + HDR - bo.y * s).toFixed(3) + ') scale(' + s.toFixed(5) + ')">' + cO + '</g>';
+  if (items.length) {
+    var gy = m + HDR + bo.h * s + 6;
+    rowsPos.forEach(function (r) { inner += '<g transform="translate(' + (m + r[0] * s).toFixed(2) + ',' + (gy + r[1] * s).toFixed(2) + ') scale(' + s.toFixed(5) + ')">' + r[2].svg + '<text x="74" y="27" font-size="12.5" fill="#1f2a44">' + esc(r[2].label) + '</text></g>'; });
+  }
+  var svgFn = function (w, h, f) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + w + '" height="' + h + '" font-family="' + font + '">' + (f ? '<style>' + fontCss() + '</style>' : '') + '<rect width="' + W + '" height="' + H + '" fill="#fff"/>' + inner + '</svg>'; };
+  var miss = state.persons.filter(function (p) { return p.name && !(o.unk !== false && GE.isUnk(p.name)) && !String(p.alias || '').trim(); }).length;
+  return { book: true, long: true, pages: [{ kind: 'long', build: svgFn }], P: P, N: 1, total: 1, ptEff: pt, ptWant: pt, shrunk: false, missingAlias: miss, widthMm: W, heightMm: H, tooWide: W > 5080 };
+}
+function fillPrintBook(r) {
+  var st = $('#pageCss'); if (!st) { st = document.createElement('style'); st.id = 'pageCss'; document.head.appendChild(st); }
+  st.textContent = '@page{size:' + r.P.w + 'mm ' + r.P.h + 'mm;margin:0}';
+  $('#printArea').innerHTML = r.pages.map(function (pg, i) { return '<div style="width:' + r.P.w + 'mm;height:' + r.P.h + 'mm;overflow:hidden;' + (i < r.pages.length - 1 ? 'break-after:page;page-break-after:always' : '') + '">' + pg.build(r.P.w + 'mm', r.P.h + 'mm', i === 0) + '</div>'; }).join('');
+}
+function pngOfSvg(svgStr, wmm, hmm, name) {
+  var k = Math.min(300 / 25.4, 16000 / Math.max(wmm, hmm)), url = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })), img = new Image();
+  img.onload = function () {
+    (img.decode ? img.decode() : Promise.resolve()).catch(function () { }).then(function () {
+      var c = document.createElement('canvas'); c.width = Math.round(wmm * k); c.height = Math.round(hmm * k);
+      var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(function (b) { if (b) dl(name, b); }, 'image/png');
+    });
+  };
+  img.src = url;
+}
+function bookAction(r, a) {
+  if (a === 'pdf') { fillPrintBook(r); $('#dExp').close(); setTimeout(function () { window.print(); }, 150); return; }
+  r.pages.forEach(function (pg, i) {
+    setTimeout(function () {
+      var svg = pg.build(r.P.w + 'mm', r.P.h + 'mm', true), base = fname('x').replace(/\.x$/, '') + '-หน้า' + (i + 1);
+      if (a === 'svg') dl(base + '.svg', new Blob([svg], { type: 'image/svg+xml' })); else pngOfSvg(svg, r.P.w, r.P.h, base + '.png');
+    }, i * 900);
+  });
+  toast('กำลังดาวน์โหลด ' + r.pages.length + ' ไฟล์ — ถ้าเบราว์เซอร์ถาม ให้อนุญาตการดาวน์โหลดหลายไฟล์');
 }
 function dl(name, blob) {
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { a.remove(); URL.revokeObjectURL(a.href); }, 1500);
 }
+/* ---------- Canva export: symbols/lines as one picture layer + every text line as its own editable PPTX text box ---------- */
+var CRC_T = null;
+function crc32(u8) {
+  if (!CRC_T) { CRC_T = []; for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; CRC_T[n] = c >>> 0; } }
+  var c = 0xFFFFFFFF; for (var i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function zipStore(files) {
+  var enc = new TextEncoder(), out = [], cen = [], off = 0;
+  function u16(v) { return [v & 255, (v >>> 8) & 255]; }
+  function u32(v) { return [v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]; }
+  function put(a) { var u = a instanceof Uint8Array ? a : new Uint8Array(a); out.push(u); off += u.length; }
+  files.forEach(function (f) {
+    var nm = enc.encode(f.n), crc = crc32(f.d), sz = f.d.length, at = off;
+    put([].concat([0x50, 0x4b, 3, 4], u16(20), u16(0x0800), u16(0), u16(0), u16(33), u32(crc), u32(sz), u32(sz), u16(nm.length), u16(0)));
+    put(nm); put(f.d);
+    cen.push([].concat([0x50, 0x4b, 1, 2], u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(33), u32(crc), u32(sz), u32(sz), u16(nm.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(at)), Array.prototype.slice.call(nm));
+  });
+  var cs = off; cen.forEach(function (c) { put(c); });
+  put([].concat([0x50, 0x4b, 5, 6], u16(0), u16(0), u16(files.length), u16(files.length), u32(off - cs), u32(cs), u16(0)));
+  return new Blob(out, { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' });
+}
+var NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main', NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', NS_P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+var XH = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n', NSALL = ' xmlns:a="' + NS_A + '" xmlns:r="' + NS_R + '" xmlns:p="' + NS_P + '"';
+var GRP = '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>';
+function pptxTheme() {
+  function ln(w) { return '<a:ln w="' + w + '" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln>'; }
+  var fill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>';
+  return XH + '<a:theme xmlns:a="' + NS_A + '" name="Genogram"><a:themeElements><a:clrScheme name="Genogram"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="1F2A44"/></a:dk2><a:lt2><a:srgbClr val="EEEEEE"/></a:lt2><a:accent1><a:srgbClr val="234E8C"/></a:accent1><a:accent2><a:srgbClr val="D9534F"/></a:accent2><a:accent3><a:srgbClr val="2E9E6B"/></a:accent3><a:accent4><a:srgbClr val="D98B00"/></a:accent4><a:accent5><a:srgbClr val="5B2A86"/></a:accent5><a:accent6><a:srgbClr val="0A7F8F"/></a:accent6><a:hlink><a:srgbClr val="234E8C"/></a:hlink><a:folHlink><a:srgbClr val="5B2A86"/></a:folHlink></a:clrScheme>' +
+    '<a:fontScheme name="Genogram"><a:majorFont><a:latin typeface="Sarabun"/><a:ea typeface=""/><a:cs typeface="Sarabun"/></a:majorFont><a:minorFont><a:latin typeface="Sarabun"/><a:ea typeface=""/><a:cs typeface="Sarabun"/></a:minorFont></a:fontScheme>' +
+    '<a:fmtScheme name="Genogram"><a:fillStyleLst>' + fill + fill + fill + '</a:fillStyleLst><a:lnStyleLst>' + ln(6350) + ln(12700) + ln(19050) + '</a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst>' + fill + fill + fill + '</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>';
+}
+function pptxBuild(slides, wmm, hmm) {
+  var enc = new TextEncoder(), E = function (mm) { return Math.round(mm * 36000); }, files = [], n = slides.length;
+  function x(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function add(name, str) { files.push({ n: name, d: enc.encode(str) }); }
+  var ct = XH + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>';
+  for (var i = 1; i <= n; i++) ct += '<Override PartName="/ppt/slides/slide' + i + '.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>';
+  add('[Content_Types].xml', ct + '</Types>');
+  add('_rels/.rels', XH + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + NS_R + '/officeDocument" Target="ppt/presentation.xml"/></Relationships>');
+  var pr = XH + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + NS_R + '/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rId2" Type="' + NS_R + '/theme" Target="theme/theme1.xml"/>', ids = '';
+  for (i = 1; i <= n; i++) { pr += '<Relationship Id="rId' + (i + 2) + '" Type="' + NS_R + '/slide" Target="slides/slide' + i + '.xml"/>'; ids += '<p:sldId id="' + (255 + i) + '" r:id="rId' + (i + 2) + '"/>'; }
+  add('ppt/_rels/presentation.xml.rels', pr + '</Relationships>');
+  add('ppt/presentation.xml', XH + '<p:presentation' + NSALL + '><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>' + ids + '</p:sldIdLst><p:sldSz cx="' + E(wmm) + '" cy="' + E(hmm) + '"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>');
+  add('ppt/theme/theme1.xml', pptxTheme());
+  add('ppt/slideMasters/slideMaster1.xml', XH + '<p:sldMaster' + NSALL + '><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree>' + GRP + '</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>');
+  add('ppt/slideMasters/_rels/slideMaster1.xml.rels', XH + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + NS_R + '/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="' + NS_R + '/theme" Target="../theme/theme1.xml"/></Relationships>');
+  add('ppt/slideLayouts/slideLayout1.xml', XH + '<p:sldLayout' + NSALL + ' type="blank" preserve="1"><p:cSld name="Blank"><p:spTree>' + GRP + '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>');
+  add('ppt/slideLayouts/_rels/slideLayout1.xml.rels', XH + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + NS_R + '/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>');
+  slides.forEach(function (s, k) {
+    var id = 2, body = '<p:pic><p:nvPicPr><p:cNvPr id="' + (id++) + '" name="สัญลักษณ์และเส้น"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + E(wmm) + '" cy="' + E(hmm) + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>';
+    s.texts.forEach(function (t) {
+      var pad = t.pt * 0.3528 * 0.4, w = t.w + 2 * pad, l = t.al === 'ctr' ? t.x + t.w / 2 - w / 2 : t.al === 'r' ? t.x + t.w + pad - w : t.x - pad;
+      body += '<p:sp><p:nvSpPr><p:cNvPr id="' + (id++) + '" name="ข้อความ ' + (id - 2) + '"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="' + E(l) + '" y="' + E(t.y) + '"/><a:ext cx="' + E(w) + '" cy="' + E(t.h) + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="' + t.al + '"><a:lnSpc><a:spcPct val="100000"/></a:lnSpc></a:pPr><a:r><a:rPr lang="th-TH" sz="' + Math.max(100, Math.round(t.pt * 100)) + '" b="' + (t.b ? 1 : 0) + '" dirty="0"><a:solidFill><a:srgbClr val="' + t.col + '"/></a:solidFill><a:latin typeface="Sarabun"/><a:ea typeface="Sarabun"/><a:cs typeface="Sarabun"/></a:rPr><a:t>' + x(t.s) + '</a:t></a:r></a:p></p:txBody></p:sp>';
+    });
+    add('ppt/slides/slide' + (k + 1) + '.xml', XH + '<p:sld' + NSALL + '><p:cSld><p:spTree>' + GRP + body + '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>');
+    add('ppt/slides/_rels/slide' + (k + 1) + '.xml.rels', XH + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + NS_R + '/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="' + NS_R + '/image" Target="../media/image' + (k + 1) + '.png"/></Relationships>');
+    files.push({ n: 'ppt/media/image' + (k + 1) + '.png', d: s.png });
+  });
+  return zipStore(files);
+}
+/* one page: measure every <text> as rendered, then strip them and rasterise what is left */
+function canvaPage(svgStr, wmm, hmm) {
+  var PXMM = 4, host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-99999px;top:0;pointer-events:none';
+  host.innerHTML = svgStr; var svg = host.firstChild; svg.setAttribute('width', wmm * PXMM); svg.setAttribute('height', hmm * PXMM); document.body.appendChild(host);
+  return (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(function () { return new Promise(function (r) { setTimeout(r, 200); }); }).then(function () {
+    var sr = svg.getBoundingClientRect(), texts = [];
+    function hex(c) { var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(c || ''); return m ? [m[1], m[2], m[3]].map(function (v) { return ('0' + (+v).toString(16)).slice(-2); }).join('').toUpperCase() : '1F2A44'; }
+    Array.prototype.forEach.call(svg.querySelectorAll('text'), function (el) {
+      if (el.closest('defs,clipPath,pattern,mask')) return;
+      var s = el.textContent.replace(/\s+$/, ''); if (!s.trim()) return;
+      var cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return;
+      var r = el.getBoundingClientRect(); if (!(r.width > 0)) return;
+      var m = el.getScreenCTM(), ppu = m ? Math.sqrt(m.a * m.a + m.b * m.b) : 1, fpx = parseFloat(cs.fontSize) * ppu;
+      texts.push({ s: s, x: (r.left - sr.left) / PXMM, y: (r.top - sr.top) / PXMM, w: r.width / PXMM, h: r.height / PXMM, pt: fpx / PXMM * 72 / 25.4, col: hex(cs.fill), b: parseInt(cs.fontWeight, 10) >= 600, al: cs.textAnchor === 'middle' ? 'ctr' : cs.textAnchor === 'end' ? 'r' : 'l' });
+    });
+    Array.prototype.slice.call(svg.querySelectorAll('text')).forEach(function (el) { el.parentNode.removeChild(el); });
+    var bg = svg.querySelector(':scope > rect'); if (bg && /^(#fff|#ffffff|white)$/i.test(bg.getAttribute('fill') || '')) bg.parentNode.removeChild(bg);
+    svg.setAttribute('width', wmm + 'mm'); svg.setAttribute('height', hmm + 'mm');
+    var layer = new XMLSerializer().serializeToString(svg); document.body.removeChild(host);
+    var k = Math.min(300 / 25.4, 14000 / Math.max(wmm, hmm), Math.sqrt(1.4e8 / (wmm * hmm))), url = URL.createObjectURL(new Blob([layer], { type: 'image/svg+xml;charset=utf-8' }));
+    return new Promise(function (res, rej) {
+      var img = new Image();
+      img.onload = function () {
+        (img.decode ? img.decode() : Promise.resolve()).catch(function () { }).then(function () {
+          var c = document.createElement('canvas'); c.width = Math.round(wmm * k); c.height = Math.round(hmm * k);
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+          c.toBlob(function (b) { if (!b) { rej(new Error('png')); return; } var fr = new FileReader(); fr.onload = function () { res({ texts: texts, png: new Uint8Array(fr.result), svg: layer }); }; fr.readAsArrayBuffer(b); }, 'image/png');
+        });
+      };
+      img.onerror = function () { rej(new Error('svg')); }; img.src = url;
+    });
+  });
+}
+function canvaMake(o) {
+  var specs = [], wmm, hmm;
+  if (o.mode === 'book' || o.mode === 'one') { var r = buildBook(o); wmm = r.P.w; hmm = r.P.h; r.pages.forEach(function (pg, i) { specs.push(pg.build(wmm + 'mm', hmm + 'mm', i === 0)); }); }
+  else { var q = buildExport(o), s = Math.min(1400 / q.W, 1400 / q.H, 0.3); wmm = +(q.W * s).toFixed(2); hmm = +(q.H * s).toFixed(2); specs.push(q.build(wmm + 'mm', hmm + 'mm')); }
+  var done = [], chain = Promise.resolve();
+  specs.forEach(function (sv) { chain = chain.then(function () { return canvaPage(sv, wmm, hmm); }).then(function (p) { done.push(p); }); });
+  return chain.then(function () { return { blob: pptxBuild(done, wmm, hmm), pages: done, w: wmm, h: hmm }; });
+}
+function doCanva(o) {
+  if (o.mode === 'long') { toast('โหมดแถวยาวใช้กับ Canva ไม่ได้ — เลือก “หน้าเดียว” หรือ “ชุดลงเล่ม”'); return; }
+  toast('กำลังสร้างไฟล์สำหรับ Canva…');
+  canvaMake(o).then(function (c) {
+    dl(fname('pptx'), c.blob);
+    if (c.pages.length === 1) setTimeout(function () { dl(fname('x').replace(/\.x$/, '') + '-สัญลักษณ์.svg', new Blob([c.pages[0].svg], { type: 'image/svg+xml' })); }, 700);
+    toast('ได้ไฟล์ .pptx แล้ว (' + c.pages.length + ' หน้า, ข้อความ ' + c.pages.reduce(function (a, p) { return a + p.texts.length; }, 0) + ' กล่อง) — อัปโหลดเข้า Canva ได้เลย');
+  }).catch(function () { toast('สร้างไฟล์สำหรับ Canva ไม่ได้ — ลองโหมดอื่นหรือใช้ PDF'); });
+}
 function fname(ext) { return (fam.title || 'genogram').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_').slice(0, 60) + '.' + ext; }
 function renderExportDialog() {
-  var o = expOpts(), r = buildExport(o), box = $('#expOpts');
+  var o = expOpts(), book = o.mode === 'book' || o.mode === 'one' || o.mode === 'long', r = o.mode === 'long' ? buildLong(o) : (book ? buildBook(o) : buildExport(o)), box = $('#expOpts');
   function ck(k, t) { return '<label class="ck"><input type="checkbox" data-eo="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + t + '</label>'; }
-  box.innerHTML = '<div class="st">ตัวเลือก</div>' + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') +
+  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + '</select></label>' + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
     (o.alias && r.missingAlias ? '<div class="warnbox">มี ' + r.missingAlias + ' คนที่ยังไม่ตั้งตัวย่อ — ระบบใช้ตัวย่อที่สร้างอัตโนมัติจากชื่อให้ (ตรวจดูก่อนส่ง)</div>' : '') +
     (!o.alias ? '<div class="warnbox">กำลังจะแสดง<b>ชื่อจริง</b>ของชาวบ้านในรูป — ตรวจว่ารายงานอนุญาตหรือไม่</div>' : '') +
-    '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
+    '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).filter(function (k) { return !book || k !== 'auto'; }).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
     '<label>ขอบกระดาษ (มม.)<input type="number" min="0" max="40" data-eo="margin" value="' + o.margin + '"></label>' +
-    '<div class="btns" style="margin-top:10px"><button class="pri" data-ex="pdf">พิมพ์ / บันทึกเป็น PDF</button><button data-ex="png">ดาวน์โหลด PNG</button><button data-ex="svg">ดาวน์โหลด SVG</button></div>' +
-    '<p class="note" style="margin-top:8px">PDF เป็นเวกเตอร์ (คมที่สุด) — ในหน้าต่างพิมพ์ให้เลือกปลายทาง “บันทึกเป็น PDF” และปิด “หัวกระดาษและท้ายกระดาษ”<br>PNG ความละเอียด 300 dpi ตามขนาดกระดาษ ใช้แทรกใน Word ได้ · SVG ไม่ควรใช้ใน Word</p>';
+    '<div class="btns" style="margin-top:10px"><button class="pri" data-ex="pdf">พิมพ์ / บันทึกเป็น PDF</button><button data-ex="png">ดาวน์โหลด PNG</button><button data-ex="svg">ดาวน์โหลด SVG</button><button data-ex="canva">สำหรับ Canva (.pptx)</button></div>' +
+    '<p class="note" style="margin-top:8px">PDF เป็นเวกเตอร์ (คมที่สุด) — ในหน้าต่างพิมพ์ให้เลือกปลายทาง “บันทึกเป็น PDF” และปิด “หัวกระดาษและท้ายกระดาษ”<br>PNG ความละเอียด 300 dpi ตามขนาดกระดาษ ใช้แทรกใน Word ได้ · SVG ไม่ควรใช้ใน Word<br><b>สำหรับ Canva:</b> ได้ไฟล์ .pptx ที่ข้อความทุกบรรทัดเป็นกล่องข้อความแยก (ย้าย/แก้/เปลี่ยนสีได้) วางบนภาพสัญลักษณ์และเส้น · ใช้ได้กับ “หน้าเดียว” และ “ชุดลงเล่ม”</p>';
+  if (book) {
+    $('#expPv').innerHTML = r.pages.map(function (pg, i) { return '<div style="margin-bottom:8px;border:1px solid #cfd6e4;background:#fff">' + pg.build('100%', 'auto', i === 0) + '</div>'; }).join('');
+    if (r.long) { $('#expInfo').innerHTML = 'หน้ากระดาษยาวพิเศษ <b>' + Math.round(r.widthMm) + ' × ' + Math.round(r.heightMm) + ' มม.</b> (ยาว ≈ ' + (r.widthMm / 1000).toFixed(2) + ' ม.) · ตัวอักษรเล็กสุด ' + r.ptEff + ' pt' + (r.tooWide ? '<div class="warnbox">ยาวเกิน 5,080 มม. (ขีดจำกัดของหลายโปรแกรมอ่าน PDF) — ลดขนาดตัวอักษรลง</div>' : '<div class="warnbox">สำหรับไฟล์ PDF ที่ซูมอ่านหรือวาดทับบนแท็บเล็ต — พิมพ์ลงกระดาษมาตรฐานไม่ได้ ใช้ “ชุดลงเล่ม” สำหรับฉบับพิมพ์</div>'); return r; }
+    if (r.one) { $('#expInfo').innerHTML = 'ผังทั้งหมดในหน้าเดียว · ตัวอักษรเล็กสุดบนกระดาษ ≈ <b>' + r.ovPt.toFixed(1) + ' pt</b><div class="warnbox">เหมาะกับไฟล์ PDF ที่ซูมอ่านได้ (เวกเตอร์คม) — ถ้าพิมพ์ลงกระดาษ ตัวหนังสือจะเล็กเกินอ่าน ใช้ “ชุดลงเล่ม” สำหรับฉบับพิมพ์</div>'; return r; }
+    var bi = 'ทั้งหมด <b>' + r.total + ' หน้า</b>' + (r.N > 1 ? ' (ภาพรวม 1 + รายละเอียด ' + r.N + ')' : '') + ' · ตัวอักษรเล็กสุดเมื่อพิมพ์ ≈ <b>' + r.ptEff.toFixed(1) + ' pt</b>';
+    if (r.shrunk) bi += '<div class="warnbox">ผังสูงเกินกว่าจะใส่ในหน้าได้ที่ ' + r.ptWant + ' pt จึงย่อเหลือ ' + r.ptEff.toFixed(1) + ' pt — ลองเปลี่ยนเป็นกระดาษแนวตั้ง / A3 หรือ “แก้คนที่ซ้อนกัน/จัดวาง” ให้ผังเตี้ยลง</div>';
+    else bi += '<div class="okbox">อ่านได้ตามที่ตั้งไว้ (' + r.ptWant + ' pt ขึ้นไป)</div>';
+    $('#expInfo').innerHTML = bi; return r;
+  }
   $('#expPv').innerHTML = r.svg;
   var info = 'ขนาดภาพ ' + r.W + '×' + r.H + ' หน่วย';
   if (r.minPt != null) {
@@ -828,7 +1162,7 @@ function init() {
   $('#bkBody').addEventListener('change', function (e) { if (e.target.id === 'bkFile') { var f = e.target.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { importText(r.result); }; r.readAsText(f); e.target.value = ''; } });
   $('#expOpts').addEventListener('change', function (e) { var k = e.target.getAttribute('data-eo'); if (!k) return; var o = expOpts(); o[k] = e.target.type === 'checkbox' ? e.target.checked : (e.target.type === 'number' ? Math.max(0, Math.min(40, +e.target.value || 0)) : e.target.value); touch(); renderExportDialog(); });
   $('#expOpts').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-ex]'); if (!b) return; var o = expOpts(), r = buildExport(o), a = b.getAttribute('data-ex');
+    var b = e.target.closest('[data-ex]'); if (!b) return; var o = expOpts(), a = b.getAttribute('data-ex'); if (a === 'canva') { doCanva(o); return; } if (o.mode === 'long') { bookAction(buildLong(o), a); return; } if (o.mode === 'book' || o.mode === 'one') { bookAction(buildBook(o), a); return; } var r = buildExport(o);
     if (a === 'svg') { dl(fname('svg'), new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml' })); toast('ดาวน์โหลด SVG แล้ว'); }
     else if (a === 'png') doPng(r, o); else if (a === 'pdf') doPrint(r, o);
   });
@@ -861,7 +1195,7 @@ function boot() {
   }).then(function (b) { if (b && b > backupAt) { backupAt = b; setStat(); } return Store.getMeta('fsHandle'); }).then(function (h) {
     if (h && h.queryPermission) { fsh = h; return h.queryPermission({ mode: 'readwrite' }).then(function (p) { fsState = p === 'granted' ? 'ok' : 'need'; setStat(); }); }
   }).catch(function () { });
-  window.GM = { get state() { return state; }, get fam() { return fam; }, get project() { return project; }, draw: draw, fit: fit, addPerson: addPerson, addSpouse: addSpouse, addChildOf: addChildOf, addParents: addParents, addSibling: addSibling, pushSnap: pushSnap, save: save, persistNow: persistNow, select: select, tidy: tidy, buildExport: buildExport, makeSample: makeSample, importText: importText, setActive: setActive, addFamily: addFamily, expOpts: expOpts, bundle: bundle, normalize: normalize, get saveState() { return saveState; }, mirrorNow: mirrorNow, snapNow: function () { return Store.addSnap(fam.id, snapStr(), 'test', state.persons.length); } };
+  window.GM = { get state() { return state; }, get fam() { return fam; }, get project() { return project; }, draw: draw, fit: fit, addPerson: addPerson, addSpouse: addSpouse, addChildOf: addChildOf, addParents: addParents, addSibling: addSibling, pushSnap: pushSnap, save: save, persistNow: persistNow, select: select, tidy: tidy, buildExport: buildExport, buildBook: buildBook, buildLong: buildLong, fillPrintBook: fillPrintBook, makeSample: makeSample, importText: importText, canvaMake: canvaMake, setActive: setActive, addFamily: addFamily, expOpts: expOpts, bundle: bundle, normalize: normalize, get saveState() { return saveState; }, mirrorNow: mirrorNow, snapNow: function () { return Store.addSnap(fam.id, snapStr(), 'test', state.persons.length); } };
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
