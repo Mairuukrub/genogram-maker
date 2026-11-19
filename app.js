@@ -1237,6 +1237,7 @@ function renderExportDialog() {
   var info = 'ขนาดภาพ ' + r.W + '×' + r.H + ' หน่วย';
   if (r.minPt != null) {
     info += ' · ตัวอักษรเล็กสุดเมื่อพิมพ์ ≈ <b>' + r.minPt.toFixed(1) + ' pt</b>';
+    if (r.s && r.A && (r.H * r.s) < 0.4 * (r.A.h - 2 * o.margin)) info += '<div class="warnbox">ผังนี้แบนและกว้างมาก จึงเป็นแถบแคบกลางกระดาษ เหลือที่ว่างเกือบทั้งหน้า — ถ้าอยากให้เต็ม A4 ใช้รูปแบบ “แบบเล่มรายงาน” หรือ “หน้าเดียว A4 (พับแถว)”</div>';
     if (r.minPt < 7.5) info += '<div class="warnbox">ตัวอักษรเล็กไปจนอ่านยากในเล่ม — ลองเลือก A3 / เปลี่ยนแนวกระดาษ / ปิด “หมายเหตุ” / ใช้ “จัดวาง” ให้ผังกระชับขึ้น หรือแยกเป็นหลายผัง</div>';
     else info += '<div class="okbox">อ่านได้สบายเมื่อพิมพ์ในขนาดนี้ (ควรไม่ต่ำกว่า 8 pt)</div>';
   }
@@ -1244,6 +1245,20 @@ function renderExportDialog() {
 }
 function openExport() { persistNow(); expCropIds = Object.keys(msel).slice(); if (!expCropIds.length && sel && sel.k === 'p') expCropIds = [sel.id]; renderExportDialog(); $('#dExp').showModal(); }
 function doPng(r, o) {
+  if (r.s && r.A) { /* a paper size was chosen: the PNG is that whole page (same layout as printing), not just the chart's own bounding box */
+    var kmm = 300 / 25.4, Wp = Math.round(r.A.w * kmm), Hp = Math.round(r.A.h * kmm), cw = r.W * r.s * kmm, ch = r.H * r.s * kmm;
+    var url0 = URL.createObjectURL(new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml;charset=utf-8' })), im0 = new Image();
+    im0.onload = function () {
+      (im0.decode ? im0.decode() : Promise.resolve()).catch(function () { }).then(function () {
+        var c0 = document.createElement('canvas'); c0.width = Wp; c0.height = Hp;
+        var g0 = c0.getContext('2d'); g0.fillStyle = '#fff'; g0.fillRect(0, 0, Wp, Hp);
+        g0.drawImage(im0, (Wp - cw) / 2, (Hp - ch) / 2, cw, ch); URL.revokeObjectURL(url0);
+        c0.toBlob(function (b) { if (b) { dl(fname('png'), b); toast('สร้าง PNG ขนาดหน้ากระดาษแล้ว (' + Wp + '×' + Hp + ' px)'); } else toast('สร้าง PNG ไม่ได้ — ใช้ PDF หรือ SVG แทน'); }, 'image/png');
+      });
+    };
+    im0.onerror = function () { toast('สร้าง PNG ไม่ได้ — ใช้ PDF หรือ SVG แทน'); };
+    im0.src = url0; return;
+  }
   var k = r.s ? r.s / 25.4 * 300 : 2; k = Math.min(k, 9000 / Math.max(r.W, r.H));
   var url = URL.createObjectURL(new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml;charset=utf-8' })), img = new Image();
   img.onload = function () {
