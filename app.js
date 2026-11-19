@@ -772,7 +772,7 @@ function makeSample() {
 var PAPERS = { a4l: { n: 'A4 แนวนอน', w: 297, h: 210 }, a4p: { n: 'A4 แนวตั้ง', w: 210, h: 297 }, a3l: { n: 'A3 แนวนอน', w: 420, h: 297 }, a3p: { n: 'A3 แนวตั้ง', w: 297, h: 420 }, auto: { n: 'ตามขนาดผัง (ไม่กำหนดกระดาษ)', w: 0, h: 0 } };
 function expOpts() {
   var e = fam.exp = fam.exp || {};
-  var d = { snip: true, title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true, mode: 'single', bookPt: 8, longPt: 6, condFill: !!fam.condFill, mono: !!fam.mono, unk: fam.unk !== false, unkBlank: !!fam.unkBlank };
+  var d = { snip: true, title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, dpi: 300, subtitle: true, mode: 'single', bookPt: 8, longPt: 6, condFill: !!fam.condFill, mono: !!fam.mono, unk: fam.unk !== false, unkBlank: !!fam.unkBlank };
   for (var k in d) if (e[k] === undefined) e[k] = d[k];
   return e;
 }
@@ -1207,8 +1207,8 @@ function pptxBuild(slides, wmm, hmm) {
   slides.forEach(function (s, k) {
     var id = 2, body = '<p:pic><p:nvPicPr><p:cNvPr id="' + (id++) + '" name="สัญลักษณ์และเส้น"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + E(wmm) + '" cy="' + E(hmm) + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>';
     s.texts.forEach(function (t) {
-      var pad = t.pt * 0.3528 * 0.4, w = t.w + 2 * pad, l = t.al === 'ctr' ? t.x + t.w / 2 - w / 2 : t.al === 'r' ? t.x + t.w + pad - w : t.x - pad;
-      body += '<p:sp><p:nvSpPr><p:cNvPr id="' + (id++) + '" name="ข้อความ ' + (id - 2) + '"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="' + E(l) + '" y="' + E(t.y) + '"/><a:ext cx="' + E(w) + '" cy="' + E(t.h) + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="' + t.al + '"><a:lnSpc><a:spcPct val="100000"/></a:lnSpc></a:pPr><a:r><a:rPr lang="th-TH" sz="' + Math.max(100, Math.round(t.pt * 100)) + '" b="' + (t.b ? 1 : 0) + '" dirty="0"><a:solidFill><a:srgbClr val="' + t.col + '"/></a:solidFill><a:latin typeface="Sarabun"/><a:ea typeface="Sarabun"/><a:cs typeface="Sarabun"/></a:rPr><a:t>' + x(t.s) + '</a:t></a:r></a:p></p:txBody></p:sp>';
+      var pad = t.pt * 0.3528 * 0.4, w = t.w + 2 * pad, l = t.rot != null ? t.cx - w / 2 : t.al === 'ctr' ? t.x + t.w / 2 - w / 2 : t.al === 'r' ? t.x + t.w + pad - w : t.x - pad, ty = t.rot != null ? t.cy - t.h / 2 : t.y;
+      body += '<p:sp><p:nvSpPr><p:cNvPr id="' + (id++) + '" name="ข้อความ ' + (id - 2) + '"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm' + (t.rot != null ? ' rot="' + Math.round(t.rot * 60000) + '"' : '') + '><a:off x="' + E(l) + '" y="' + E(ty) + '"/><a:ext cx="' + E(w) + '" cy="' + E(t.h) + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" rtlCol="0" anchor="ctr"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="' + t.al + '"><a:lnSpc><a:spcPct val="100000"/></a:lnSpc></a:pPr><a:r><a:rPr lang="th-TH" sz="' + Math.max(100, Math.round(t.pt * 100)) + '" b="' + (t.b ? 1 : 0) + '" dirty="0"><a:solidFill><a:srgbClr val="' + t.col + '"/></a:solidFill><a:latin typeface="Sarabun"/><a:ea typeface="Sarabun"/><a:cs typeface="Sarabun"/></a:rPr><a:t>' + x(t.s) + '</a:t></a:r></a:p></p:txBody></p:sp>';
     });
     add('ppt/slides/slide' + (k + 1) + '.xml', XH + '<p:sld' + NSALL + '><p:cSld><p:spTree>' + GRP + body + '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>');
     add('ppt/slides/_rels/slide' + (k + 1) + '.xml.rels', XH + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="' + NS_R + '/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="' + NS_R + '/image" Target="../media/image' + (k + 1) + '.png"/></Relationships>');
@@ -1240,6 +1240,10 @@ function canvaPage(svgStr, wmm, hmm) {
         }
       }
       var m = el.getScreenCTM(), ppu = m ? Math.sqrt(m.a * m.a + m.b * m.b) : 1, fpx = parseFloat(cs.fontSize) * ppu;
+      var ang = m ? Math.atan2(m.b, m.a) * 180 / Math.PI : 0, rotd = Math.abs(ang) > 1 && Math.abs(Math.abs(ang) - 360) > 1;
+      if (rotd) { /* chart turned (e.g. rotate 90°): keep the text box un-rotated in its own size and let the slide rotate it, centred where the rendered text sits */
+        var tb = el.getBBox(); texts.push({ s: s, rot: (ang + 360) % 360, cx: ((r.left + r.right) / 2 - sr.left) / PXMM, cy: ((r.top + r.bottom) / 2 - sr.top) / PXMM, w: tb.width * ppu / PXMM, h: tb.height * ppu / PXMM, pt: fpx / PXMM * 72 / 25.4, col: hex(cs.fill), b: parseInt(cs.fontWeight, 10) >= 600, al: 'ctr' }); return;
+      }
       texts.push({ s: s, x: (r.left - sr.left) / PXMM, y: (r.top - sr.top) / PXMM, w: r.width / PXMM, h: r.height / PXMM, pt: fpx / PXMM * 72 / 25.4, col: hex(cs.fill), b: parseInt(cs.fontWeight, 10) >= 600, al: cs.textAnchor === 'middle' ? 'ctr' : cs.textAnchor === 'end' ? 'r' : 'l' });
     });
     Array.prototype.slice.call(svg.querySelectorAll('text')).forEach(function (el) { el.parentNode.removeChild(el); });
@@ -1286,6 +1290,7 @@ function renderExportDialog() {
     (!o.alias ? '<div class="warnbox">กำลังจะแสดง<b>ชื่อจริง</b>ของชาวบ้านในรูป — ตรวจว่ารายงานอนุญาตหรือไม่</div>' : '') +
     '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).filter(function (k) { return !book || k !== 'auto'; }).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
     '<label>ขอบกระดาษ (มม.)<input type="number" min="0" max="40" data-eo="margin" value="' + o.margin + '"></label>' +
+    '<label>ความละเอียด PNG (dpi) — ยิ่งสูง ซูมใน Word/PDF แล้วยิ่งอ่านออก (ไฟล์ใหญ่ขึ้น)<select data-eo="dpi">' + opt('300', '300 (ปกติ)', String(o.dpi || 300)) + opt('600', '600 (ซูมอ่านได้)', String(o.dpi || 300)) + opt('1200', '1200 (ละเอียดมาก — ผังใหญ่ ใช้เวลาและหน่วยความจำมาก)', String(o.dpi || 300)) + '</select></label>' +
     '<div class="btns" style="margin-top:10px"><button class="pri" data-ex="pdf">พิมพ์ / บันทึกเป็น PDF</button><button data-ex="png">ดาวน์โหลด PNG</button><button data-ex="svg">ดาวน์โหลด SVG</button><button data-ex="canva">สำหรับ Canva (.pptx)</button></div>' +
     '<p class="note" style="margin-top:8px">PDF เป็นเวกเตอร์ (คมที่สุด) — ในหน้าต่างพิมพ์ให้เลือกปลายทาง “บันทึกเป็น PDF” และปิด “หัวกระดาษและท้ายกระดาษ”<br>PNG ความละเอียด 300 dpi ตามขนาดกระดาษ ใช้แทรกใน Word ได้ · SVG ไม่ควรใช้ใน Word<br><b>สำหรับ Canva:</b> ได้ไฟล์ .pptx ที่ข้อความทุกบรรทัดเป็นกล่องข้อความแยก (ย้าย/แก้/เปลี่ยนสีได้) วางบนภาพสัญลักษณ์และเส้น · ใช้ได้กับ “หน้าเดียว” และ “ชุดลงเล่ม”</p>';
   if (book) {
@@ -1311,20 +1316,20 @@ function renderExportDialog() {
 function openExport() { persistNow(); expCropIds = Object.keys(msel).slice(); if (!expCropIds.length && sel && sel.k === 'p') expCropIds = [sel.id]; renderExportDialog(); $('#dExp').showModal(); }
 function doPng(r, o) {
   if (r.s && r.A) { /* a paper size was chosen: the PNG is that whole page (same layout as printing), not just the chart's own bounding box */
-    var kmm = 300 / 25.4, Wp = Math.round(r.A.w * kmm), Hp = Math.round(r.A.h * kmm), cw = r.W * r.s * kmm, ch = r.H * r.s * kmm;
+    var dpi = Math.min(+o.dpi || 300, 16000 / Math.max(r.A.w, r.A.h) * 25.4, Math.sqrt(150e6 / (r.A.w * r.A.h)) * 25.4), kmm = dpi / 25.4, Wp = Math.round(r.A.w * kmm), Hp = Math.round(r.A.h * kmm), cw = r.W * r.s * kmm, ch = r.H * r.s * kmm; /* browsers cap canvases (~16000 px a side, ~150 MP here) */
     var url0 = URL.createObjectURL(new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml;charset=utf-8' })), im0 = new Image();
     im0.onload = function () {
       (im0.decode ? im0.decode() : Promise.resolve()).catch(function () { }).then(function () {
         var c0 = document.createElement('canvas'); c0.width = Wp; c0.height = Hp;
         var g0 = c0.getContext('2d'); g0.fillStyle = '#fff'; g0.fillRect(0, 0, Wp, Hp);
         g0.drawImage(im0, (Wp - cw) / 2, (Hp - ch) / 2, cw, ch); URL.revokeObjectURL(url0);
-        c0.toBlob(function (b) { if (b) { dl(fname('png'), b); toast('สร้าง PNG ขนาดหน้ากระดาษแล้ว (' + Wp + '×' + Hp + ' px)'); } else toast('สร้าง PNG ไม่ได้ — ใช้ PDF หรือ SVG แทน'); }, 'image/png');
+        c0.toBlob(function (b) { if (b) { dl(fname('png'), b); toast('สร้าง PNG ขนาดหน้ากระดาษแล้ว (' + Wp + '×' + Hp + ' px · ' + Math.round(dpi) + ' dpi)'); } else toast('สร้าง PNG ไม่ได้ — ใช้ PDF หรือ SVG แทน'); }, 'image/png');
       });
     };
     im0.onerror = function () { toast('สร้าง PNG ไม่ได้ — ใช้ PDF หรือ SVG แทน'); };
     im0.src = url0; return;
   }
-  var k = r.s ? r.s / 25.4 * 300 : 2; k = Math.min(k, 9000 / Math.max(r.W, r.H));
+  var dm = (+o.dpi || 300) / 300, k = r.s ? r.s / 25.4 * 300 * dm : 2 * dm; k = Math.min(k, 16000 / Math.max(r.W, r.H), Math.sqrt(150e6 / (r.W * r.H)));
   var url = URL.createObjectURL(new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml;charset=utf-8' })), img = new Image();
   img.onload = function () {
     (img.decode ? img.decode() : Promise.resolve()).catch(function () { }).then(function () {
