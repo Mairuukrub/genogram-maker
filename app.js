@@ -25,12 +25,12 @@ var undoMap = {}, redoMap = {}, undoS = [], redoS = [];
 var sel = null, msel = {}, mode = null, selMode = false, brkMode = false, snipMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
 var svg, panel, ctr = 0;
 
-function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [], cuts: [] }; }
+function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], loops: [], texts: [], cuts: [] }; }
 function newFam(title) {
   return { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title || '', house: '', place: '', interviewer: '', date: '', alias: false, showNote: true, condText: true, gen: true, typed: false, tcol: {}, pstyle: 'both', adopt: 'caption', hhs: 'ellipse', hhc: '', condFill: false, mono: false, unk: true, unkBlank: false, cx: {}, exp: {}, state: newState(), created: Date.now(), updated: Date.now() };
 }
 function normalize(s) {
-  s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.texts = s.texts || []; s.cuts = s.cuts || []; s.v = 2;
+  s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.loops = s.loops || []; s.texts = s.texts || []; s.cuts = s.cuts || []; s.v = 2;
   s.persons.forEach(function (p) {
     p.x = +p.x || 0; p.y = +p.y || 0; p.sex = p.sex || 'U';
     var a = String(p.age == null ? '' : p.age).trim();
@@ -51,7 +51,7 @@ function ctxFor(f, over) {
   return o;
 }
 function ixOf(st) { return GE.ixOf(st || state); }
-function exists(id) { return state.persons.some(function (p) { return p.id === id; }) || state.unions.some(function (p) { return p.id === id; }) || state.rels.some(function (p) { return p.id === id; }) || state.homes.some(function (p) { return p.id === id; }) || state.texts.some(function (p) { return p.id === id; }); }
+function exists(id) { return state.persons.some(function (p) { return p.id === id; }) || state.unions.some(function (p) { return p.id === id; }) || state.rels.some(function (p) { return p.id === id; }) || state.homes.some(function (p) { return p.id === id; }) || state.loops.some(function (p) { return p.id === id; }) || state.texts.some(function (p) { return p.id === id; }); }
 function newId(pre) { var id; do { id = pre + (++ctr); } while (exists(id)); return id; }
 function famLabel(f) { return (f.title || 'ครอบครัว (ยังไม่ตั้งชื่อ)') + (f.house ? ' · บ้าน ' + f.house : ''); }
 
@@ -143,7 +143,7 @@ function redo() { if (!redoS.length) return; undoS.push(snapStr()); state = fam.
 function updUR() { var u = $('#undo'), r = $('#redo'); if (u) u.disabled = !undoS.length; if (r) r.disabled = !redoS.length; }
 function findSel() {
   if (!sel) return null;
-  var list = sel.k === 'p' ? state.persons : sel.k === 'u' ? state.unions : sel.k === 'r' ? state.rels : sel.k === 't' ? state.texts : state.homes;
+  var list = sel.k === 'p' ? state.persons : sel.k === 'u' ? state.unions : sel.k === 'r' ? state.rels : sel.k === 't' ? state.texts : sel.k === 'd' ? state.loops : state.homes;
   return list.filter(function (o) { return o.id === sel.id; })[0] || null;
 }
 function afterLoad() { if (sel && !findSel()) sel = null; var ids = ixOf(); for (var k in msel) if (!ids[k]) delete msel[k]; mode = null; draw(); renderPanel(); save(); updUR(); }
@@ -223,6 +223,212 @@ function addSibling(p, sex) {
   var x = Math.max.apply(null, ks.map(function (k) { return k.x; })) + 100;
   return addPerson(sex, freeSpot(x, p.y), p.y, { from: p.from, c: p.c });
 }
+/* ---------- change / remove a person's parents (the wrong "from" link can be fixed without deleting anyone) ---------- */
+function descendantsOf(id) {
+  var set = {}, q = [id];
+  while (q.length) {
+    var c = q.pop();
+    state.unions.forEach(function (u) { if (u.a === c || u.b === c) state.persons.forEach(function (k) { if (k.from === u.id && !set[k.id]) { set[k.id] = 1; q.push(k.id); } }); });
+  }
+  return set;
+}
+function pName(p) { return (p && (p.name || GE.dispName(p, ctxFor(fam)))) || 'ไม่มีชื่อ'; }
+function parentsText(u) {
+  var m = ixOf(); return [m[u.a], u.b ? m[u.b] : null].filter(Boolean).map(pName).join(' + ');
+}
+function clearTwin(p) { if (p.tw) { var o = ixOf()[p.tw]; if (o) { delete o.tw; delete o.twi; } } delete p.tw; delete p.twi; }
+/* returns '' when done, otherwise the reason it was refused */
+function setParents(pid, uid, snapBefore) {
+  var m = ixOf(), p = m[pid], u = state.unions.filter(function (z) { return z.id === uid; })[0];
+  if (!p || !u) return 'ไม่พบคนหรือเส้นคู่ชีวิตที่เลือก';
+  if (u.a === pid || u.b === pid) return 'ตั้งตัวเองเป็นพ่อแม่ของตัวเองไม่ได้';
+  if (p.from === uid) return 'คนนี้เป็นลูกของคู่นี้อยู่แล้ว';
+  var d = descendantsOf(pid); if (d[u.a] || (u.b && d[u.b])) return 'คู่นี้เป็นลูกหลานของคนนี้อยู่แล้ว — ตั้งเป็นพ่อแม่ไม่ได้';
+  var oldFrom = p.from, hadTwin = !!p.tw;
+  pushSnap(snapBefore); clearTwin(p); p.from = uid;
+  /* same generation row as the new siblings (vertical only; sideways stays where the user put it) */
+  var ks = GE.kidsOf(state, u).filter(function (k) { return k.id !== pid; }), g = GE.ugeo(u, m), ty;
+  if (ks.length) ty = ks[0].y; else if (g) ty = (g.b ? Math.max(g.a.y, g.b.y) : g.a.y) + 150;
+  if (ty != null && Math.abs(p.y - ty) > 40) p.y = ty;
+  sel = { k: 'p', id: pid }; mode = null;
+  renderPanel(); draw(); save();
+  toast('ย้ายให้เป็นลูกของ ' + parentsText(u) + ' แล้ว' + (hadTwin ? ' (เส้นแฝดถูกยกเลิก)' : '') + ' — ผิดกดย้อนกลับได้', 'ย้อนกลับ', undo);
+  return '';
+}
+function unsetParents(pid) {
+  var p = ixOf()[pid]; if (!p || !p.from) return;
+  var u = state.unions.filter(function (z) { return z.id === p.from; })[0], was = u ? parentsText(u) : '';
+  pushSnap(); clearTwin(p); delete p.from; sel = { k: 'p', id: pid };
+  renderPanel(); draw(); save();
+  toast('ตัดออกจากพ่อแม่' + (was ? ' (' + was + ')' : '') + ' แล้ว — ตัวคนและข้อมูลยังอยู่ครบ', 'ย้อนกลับ', undo);
+}
+/* ---------- hand-drawn household loops (draw with a pen / finger / mouse like in GoodNotes) ---------- */
+var drawMode = false;
+function loopStyle() { try { return localStorage.getItem('gm2_loopstyle') || 'auto'; } catch (e) { return 'auto'; } }
+function rdp(pts, eps) { /* Ramer-Douglas-Peucker: keeps the shape with far fewer points */
+  if (pts.length < 3) return pts.slice();
+  var a = pts[0], b = pts[pts.length - 1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.sqrt(dx * dx + dy * dy) || 1e-9, mx = 0, mi = 0;
+  for (var i = 1; i < pts.length - 1; i++) { var d = Math.abs(dy * pts[i][0] - dx * pts[i][1] + b[0] * a[1] - b[1] * a[0]) / L; if (d > mx) { mx = d; mi = i; } }
+  if (mx <= eps) return [a, b];
+  return rdp(pts.slice(0, mi + 1), eps).slice(0, -1).concat(rdp(pts.slice(mi), eps));
+}
+function segCross(a, b, c, d) { /* do segments ab and cd cross? */
+  function o(p, q, r) { return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]); }
+  var d1 = o(a, b, c), d2 = o(a, b, d), d3 = o(c, d, a), d4 = o(c, d, b); return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+function trimOverlap(P) { /* the pen often overshoots the start: cut the tail where the stroke crosses its own beginning */
+  var n = P.length, lim = Math.floor(n * 0.45);
+  for (var j = n - 1; j > n - lim && j > 3; j--) for (var i = 0; i < lim && i < j - 2; i++) if (segCross(P[i], P[i + 1], P[j - 1], P[j])) return P.slice(i + 1, j);
+  return P;
+}
+function resampleClosed(P, N) { /* N points evenly spaced along the closed outline */
+  var Q = P.concat([P[0]]), cum = [0], i;
+  for (i = 1; i < Q.length; i++) cum.push(cum[i - 1] + Math.hypot(Q[i][0] - Q[i - 1][0], Q[i][1] - Q[i - 1][1]));
+  var tot = cum[cum.length - 1] || 1, out = [], k = 1;
+  for (i = 0; i < N; i++) {
+    var t = tot * i / N; while (k < cum.length - 1 && cum[k] < t) k++;
+    var seg = (cum[k] - cum[k - 1]) || 1, u = (t - cum[k - 1]) / seg; out.push([Q[k - 1][0] + (Q[k][0] - Q[k - 1][0]) * u, Q[k - 1][1] + (Q[k][1] - Q[k - 1][1]) * u]);
+  }
+  return out;
+}
+function smoothClosed(P, passes) { /* circular [1 2 1]/4 filter: takes the hand shake out, keeps the shape */
+  for (var s2 = 0; s2 < passes; s2++) { var n = P.length; P = P.map(function (p, i) { var a = P[(i - 1 + n) % n], b = P[(i + 1) % n]; return [(a[0] + 2 * p[0] + b[0]) / 4, (a[1] + 2 * p[1] + b[1]) / 4]; }); }
+  return P;
+}
+function bboxOf(P) { var xs = P.map(function (q) { return q[0]; }), ys = P.map(function (q) { return q[1]; }); return { x0: Math.min.apply(null, xs), x1: Math.max.apply(null, xs), y0: Math.min.apply(null, ys), y1: Math.max.apply(null, ys) }; }
+function ellipsePts(cx, cy, rx, ry, n, pw) { var E = []; n = n || 28; pw = pw || 2; for (var i = 0; i < n; i++) { var a = 2 * Math.PI * i / n, c = Math.cos(a), s = Math.sin(a); E.push([cx + rx * Math.sign(c) * Math.pow(Math.abs(c), 2 / pw), cy + ry * Math.sign(s) * Math.pow(Math.abs(s), 2 / pw)]); } return E; } /* pw=2 ellipse, pw=4 rounded box (superellipse) */
+function ellipseScore(P) { /* how far from an ellipse is the stroke? (0 = perfect, ~0.07+ = not an ellipse) */
+  var b = bboxOf(P), cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2, rx = (b.x1 - b.x0) / 2 || 1, ry = (b.y1 - b.y0) / 2 || 1;
+  var r = P.map(function (q) { return Math.sqrt(Math.pow((q[0] - cx) / rx, 2) + Math.pow((q[1] - cy) / ry, 2)); }), mean = r.reduce(function (a, v) { return a + v; }, 0) / r.length;
+  return Math.sqrt(r.reduce(function (a, v) { return a + (v - mean) * (v - mean); }, 0) / r.length) / (mean || 1);
+}
+/* turn the pen stroke into the chosen shape: smooth | ellipse | round | raw | auto */
+function shapeOf(raw, kind) {
+  var b = bboxOf(raw), w = b.x1 - b.x0, h = b.y1 - b.y0, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+  if (kind === 'auto') kind = ellipseScore(resampleClosed(raw, 48)) < 0.075 ? 'ellipse' : 'smooth';
+  if (kind === 'ellipse') return { pts: ellipsePts(cx, cy, w / 2, h / 2, 28, 2), raw: false };
+  if (kind === 'round') return { pts: ellipsePts(cx, cy, w / 2, h / 2, 40, 4), raw: false };
+  if (kind === 'raw') return { pts: rdp(raw.concat([raw[0]]), Math.max(2, Math.min(w, h) * 0.015)).slice(0, -1), raw: true };
+  return { pts: smoothClosed(resampleClosed(raw, 40), 3), raw: false };
+}
+function centroidOf(ids) {
+  var m = ixOf(), ps = ids.map(function (i) { return m[i]; }).filter(Boolean); if (!ps.length) return null;
+  return [Math.round(ps.reduce(function (a, p) { return a + p.x; }, 0) / ps.length), Math.round(ps.reduce(function (a, p) { return a + p.y; }, 0) / ps.length)];
+}
+function r0(q) { return [Math.round(q[0]), Math.round(q[1])]; }
+/* write the loop's current (followed) position into pts / src so it can be edited or re-anchored */
+function loopBake(l) {
+  var P = GE.loopPts(state, l), dx = P[0][0] - l.pts[0][0], dy = P[0][1] - l.pts[0][1];
+  l.pts = P.map(r0); if (l.src) l.src = l.src.map(function (q) { return r0([q[0] + dx, q[1] + dy]); });
+}
+function loopRetake(l) { /* re-pick the people inside the loop and re-anchor it to them */
+  loopBake(l);
+  l.mem = state.persons.filter(function (p) { return GE.pointIn(l.pts, p.x, p.y); }).map(function (p) { return p.id; });
+  var c = l.mem.length ? centroidOf(l.mem) : null; if (c) l.c0 = c; else { delete l.c0; delete l.mem; }
+}
+function loopSample(P, raw) { /* dense outline of what is drawn, to test it against people */
+  var out = [], n = P.length;
+  for (var i = 0; i < n; i++) {
+    var p0 = P[(i - 1 + n) % n], p1 = P[i], p2 = P[(i + 1) % n], p3 = P[(i + 2) % n];
+    for (var t = 0; t < 8; t++) {
+      var u = t / 8; if (raw) { out.push([p1[0] + (p2[0] - p1[0]) * u, p1[1] + (p2[1] - p1[1]) * u]); continue; }
+      var c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6], k = 1 - u;
+      out.push([k * k * k * p1[0] + 3 * k * k * u * c1[0] + 3 * k * u * u * c2[0] + u * u * u * p2[0], k * k * k * p1[1] + 3 * k * k * u * c1[1] + 3 * k * u * u * c2[1] + u * u * u * p2[1]]);
+    }
+  }
+  return out;
+}
+/* does the outline cut through someone's symbol or name? members -> can be fixed by growing the loop; others -> warn */
+function loopIssues(l, P) {
+  P = P || GE.loopPts(state, l);
+  var S = loopSample(P, l.raw), boxes = GE.personBoxes(state, ctxFor(fam, {})), mem = {}, hit = {};
+  state.persons.forEach(function (p) { if (GE.pointIn(P, p.x, p.y)) mem[p.id] = 1; });
+  boxes.forEach(function (b) { if (!hit[b.id] && S.some(function (q) { return q[0] >= b.x0 - 2 && q[0] <= b.x1 + 2 && q[1] >= b.y0 - 2 && q[1] <= b.y1 + 2; })) hit[b.id] = 1; });
+  var ids = Object.keys(hit); return { mem: ids.filter(function (i) { return mem[i]; }), other: ids.filter(function (i) { return !mem[i]; }) };
+}
+function loopApply(l, shaped) { l.pts = shaped.pts.map(r0); if (shaped.raw) l.raw = true; else delete l.raw; }
+function finishInk(d) {
+  clearTimeout(d.holdT); var ink = svg.querySelector('#inkp'); if (ink) ink.parentNode.removeChild(ink);
+  var raw = trimOverlap(d.pts), b = bboxOf(raw), w = b.x1 - b.x0, h = b.y1 - b.y0;
+  if (raw.length < 6 || (w < 40 && h < 40)) { toast('เส้นสั้นเกินไป — ลากให้เป็นวงรอบคนที่อยู่ด้วยกัน'); return; }
+  var kind = d.hold ? 'ellipse' : loopStyle(), shaped = shapeOf(raw, kind);
+  var l = { id: newId('d'), src: resampleClosed(raw, 60).map(r0) };
+  loopApply(l, shaped);
+  pushSnap(); state.loops.push(l); loopRetake(l); sel = { k: 'd', id: l.id }; msel = {};
+  renderPanel(); draw(); save();
+  var n = (l.mem || []).length, iss = loopIssues(l), bad = iss.mem.length + iss.other.length;
+  toast('วาดวงแล้ว — มี ' + n + ' คนอยู่ในวง' + (bad ? ' · ⚠ เส้นโดนตัวคน/ชื่อ ' + bad + ' จุด (ดูปุ่มจัดวงที่แผงขวา)' : ' · เส้นไม่โดนตัวคน ✔'), 'ย้อนกลับ', undo);
+}
+function loopReshape(l, kind) { loopBake(l); var src = (l.src && l.src.length > 5) ? l.src : l.pts; loopApply(l, shapeOf(src, kind)); loopRetake(l); }
+function loopWrap(l) { /* tight ellipse around everyone currently in the loop (symbols + names) */
+  loopBake(l); var ids = {}; (l.mem || []).forEach(function (i) { ids[i] = 1; });
+  var bs = GE.personBoxes(state, ctxFor(fam, {})).filter(function (b) { return ids[b.id]; }); if (!bs.length) return false;
+  var x0 = Math.min.apply(null, bs.map(function (b) { return b.x0; })) - 18, x1 = Math.max.apply(null, bs.map(function (b) { return b.x1; })) + 18, y0 = Math.min.apply(null, bs.map(function (b) { return b.y0; })) - 18, y1 = Math.max.apply(null, bs.map(function (b) { return b.y1; })) + 18;
+  var rx = Math.max(70, (x1 - x0) / 2 * Math.SQRT2), ry = Math.max(55, (y1 - y0) / 2 * Math.SQRT2), E = ellipsePts((x0 + x1) / 2, (y0 + y1) / 2, rx, ry, 28, 2);
+  l.pts = E.map(r0); l.src = E.map(r0); delete l.raw; loopRetake(l); return true;
+}
+function loopGrow(l) { /* smallest enlargement (about the loop's centre) that no longer cuts through its own members */
+  loopBake(l); var bb = bboxOf(l.pts), cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2, base = l.pts.map(function (q) { return q.slice(); }), baseSrc = (l.src || []).map(function (q) { return q.slice(); });
+  for (var k = 1; k <= 24; k++) {
+    var s2 = 1 + k * 0.03, P = base.map(function (q) { return [cx + (q[0] - cx) * s2, cy + (q[1] - cy) * s2]; });
+    var iss = loopIssues(l, P), inside = (l.mem || []).every(function (i) { var p = ixOf()[i]; return !p || GE.pointIn(P, p.x, p.y); });
+    if (!iss.mem.length && inside) { l.pts = P.map(r0); if (baseSrc.length) l.src = baseSrc.map(function (q) { return r0([cx + (q[0] - cx) * s2, cy + (q[1] - cy) * s2]); }); loopRetake(l); return true; }
+  }
+  return false;
+}
+function loopSec(l) {
+  var m = ixOf(), names = (l.mem || []).map(function (i) { return m[i] ? pName(m[i]) : null; }).filter(Boolean), col = l.c || fam.hhc || '#234e8c', iss = loopIssues(l);
+  function nm(ids) { return esc(ids.map(function (i) { return pName(m[i]); }).join(', ')); }
+  var issue = (!iss.mem.length && !iss.other.length) ? '<p style="color:#1f8a3a;font-size:12.5px;margin:4px 0 6px">✔ เส้นไม่ตัดผ่านตัวคนหรือชื่อ</p>'
+    : '<p style="color:#b26a00;font-size:12.5px;margin:4px 0 6px">⚠ ' + (iss.mem.length ? 'เส้นตัดผ่านสมาชิก: ' + nm(iss.mem) + ' → กด “ขยายวงให้พ้นตัวคน”' : '') + (iss.mem.length && iss.other.length ? '<br>' : '') + (iss.other.length ? 'เส้นไปโดนคนนอกวง: ' + nm(iss.other) + ' → ขยับคนนั้นหรือวาดวงใหม่' : '') + '</p>';
+  return '<div class="sec"><div class="st">วงบ้านที่วาดเอง</div>' +
+    '<p class="mut" style="margin-bottom:2px">คนในวง ' + names.length + ' คน' + (names.length ? ': ' + esc(names.join(', ')) : ' (ไม่มี)') + '</p>' + issue +
+    '<div class="st" style="margin-top:6px">จัดให้สวย</div><div class="btns"><button data-act="loopshape" data-v="smooth">เรียบ</button><button data-act="loopshape" data-v="ellipse">วงรี</button><button data-act="loopshape" data-v="round">กล่องมุมมน</button><button data-act="loopshape" data-v="raw"' + (l.raw ? ' class="pri"' : '') + '>ตามที่ลากจริง</button></div>' +
+    '<div class="btns" style="margin-top:6px"><button data-act="loopwrap">ห่อให้พอดีสมาชิก</button><button data-act="loopgrow">ขยายวงให้พ้นตัวคน</button><button data-act="loopmem">นับคนในวงใหม่</button></div>' +
+    '<label style="margin-top:8px">ป้าย (ไม่บังคับ เช่น บ้านเลขที่ 23/3)<input data-f="t" value="' + esc(l.t || '') + '"></label>' +
+    '<div class="two"><label>สี<input type="color" data-f="c" value="' + col + '" style="height:32px;padding:2px"></label><label>ความหนา<select data-f="w">' + [1.2, 2.2, 3.5, 5].map(function (w) { return opt(w, w < 2 ? 'บาง' : w < 3 ? 'ปกติ' : w < 4 ? 'หนา' : 'หนามาก', l.w || 2.2); }).join('') + '</select></label></div>' +
+    '<div class="chk"><label><input type="checkbox" data-f="ds"' + (l.ds ? ' checked' : '') + '> เส้นประ</label><label><input type="checkbox" data-f="fix"' + (l.fix ? ' checked' : '') + '> ตรึงตำแหน่ง (ไม่ตามคนเวลาย้ายคน)</label></div>' +
+    '<p class="mut" style="font-size:12px;margin-top:6px">ลากเส้นวงเพื่อย้ายทั้งวง · ลบ: ปุ่มด้านล่างหรือกด Delete</p></div>' +
+    '<div class="sec"><button class="dng" data-act="del">ลบวงนี้</button></div>';
+}
+/* ---------- relationship lines: waypoints, label, automatic avoid ---------- */
+function relAddWp(r, at) { /* at = optional point on the chart; otherwise the middle of the longest stretch */
+  var m = ixOf(), g = GE.relGeom(r, m); if (!g) return false;
+  var wp = (r.wp || []).map(function (w) { return w.slice(); }), fr;
+  if (at) fr = GE.relToFrame(r, m, at.x, at.y);
+  else if (!wp.length) { var bp = g.B(0.5); fr = GE.relToFrame(r, m, bp[0], bp[1]); }
+  else {
+    var us = [0].concat(wp.map(function (w) { return w[0]; }), [1]), bi = 0, bg = -1;
+    for (var i = 0; i < us.length - 1; i++) if (us[i + 1] - us[i] > bg) { bg = us[i + 1] - us[i]; bi = i; }
+    fr = [(us[bi] + us[bi + 1]) / 2, ((bi === 0 ? 0 : wp[bi - 1][1]) + (bi === wp.length ? 0 : wp[bi][1])) / 2];
+  }
+  fr = [Math.round(fr[0] * 1000) / 1000, Math.round(fr[1])];
+  var idx = wp.length; for (var j = 0; j < wp.length; j++) if (wp[j][0] > fr[0]) { idx = j; break; }
+  wp.splice(idx, 0, fr); r.wp = wp; delete r.bend; return true;
+}
+function relAuto(r) { /* forget manual shaping and pick the bend that keeps clear of people */
+  var m = ixOf(), a = m[r.a], b = m[r.b]; if (!a || !b) return;
+  delete r.wp; delete r.sa; delete r.sb; var bd = GE.autoBend(a, b, state); if (bd) r.bend = bd; else delete r.bend;
+}
+function relIssues(r) { /* people (other than the two ends) that the line runs through, symbol or name */
+  var m = ixOf(), g = GE.relGeom(r, m); if (!g) return [];
+  var bx = GE.personBoxes(state, ctxFor(fam, {})), hit = {};
+  for (var i = 0; i <= 48; i++) { var q = g.B(i / 48); bx.forEach(function (b) { if (b.id !== r.a && b.id !== r.b && q[0] >= b.x0 - 2 && q[0] <= b.x1 + 2 && q[1] >= b.y0 - 2 && q[1] <= b.y1 + 2) hit[b.id] = 1; }); }
+  return Object.keys(hit);
+}
+function relSec(r) {
+  var m = ixOf(), a = m[r.a], b = m[r.b], iss = relIssues(r), nw = (r.wp || []).length;
+  function sideOpt(cur) { return opt('', 'อัตโนมัติ', cur || '') + opt('t', 'ด้านบน', cur) + opt('b', 'ด้านล่าง', cur) + opt('l', 'ด้านซ้าย', cur) + opt('r', 'ด้านขวา', cur); }
+  return '<div class="sec"><div class="st">ความสัมพันธ์</div><label>ประเภท<select data-f="t">' + Object.keys(GE.RELS).map(function (k) { return opt(k, GE.RELS[k], r.t); }).join('') + '</select></label>' +
+    '<p class="mut">' + (nw ? 'มีจุดเลี้ยว ' + nw + ' จุด — ลากวงกลมสีส้มเพื่อย้าย · ดับเบิลคลิกวงกลมเพื่อลบ' : 'ลากจุดวงกลมสีส้มกลางเส้นเพื่อปรับความโค้ง · ดับเบิลคลิกบนเส้นเพื่อเพิ่มจุดเลี้ยว') + '</p>' +
+    '<div class="btns" style="margin-top:8px"><button data-act="swap">สลับทิศลูกศร</button><button data-act="straight">ทำให้ตรง</button></div>' +
+    '<div class="btns" style="margin-top:6px"><button data-act="wpadd">＋ เพิ่มจุดเลี้ยว</button>' + (nw ? '<button data-act="wpclear">ลบจุดเลี้ยวทั้งหมด</button>' : '') + '<button data-act="relauto" title="ล้างที่ปรับเอง แล้วเลือกความโค้งที่ไม่ชนคน">เลี่ยงคนอัตโนมัติ</button></div>' +
+    (iss.length ? '<p style="color:#b26a00;font-size:12.5px;margin:6px 0">⚠ เส้นพาดผ่านตัวคน/ชื่อ: ' + esc(iss.map(function (i) { return pName(m[i]); }).join(', ')) + ' → เพิ่มจุดเลี้ยวหรือกด “เลี่ยงคนอัตโนมัติ”</p>' : '<p style="color:#1f8a3a;font-size:12.5px;margin:6px 0">✔ เส้นไม่พาดผ่านตัวคนหรือชื่อ</p>') +
+    '<div class="two"><label>ออกจาก ' + esc(pName(a)) + '<select data-f="sa">' + sideOpt(r.sa) + '</select></label><label>เข้าหา ' + esc(pName(b)) + '<select data-f="sb">' + sideOpt(r.sb) + '</select></label></div>' +
+    '<label style="margin-top:6px">ป้ายบนเส้น (ไม่บังคับ เช่น ห่างเหินตั้งแต่ปี 2560)<input data-f="lt" value="' + esc(r.lt || '') + '"></label>' +
+    '<div class="btns" style="margin-top:4px"><button data-act="rlreset"' + (r.lo ? '' : ' disabled') + '>คืนตำแหน่งป้าย</button></div>' +
+    '<p class="mut" style="font-size:12px;margin-top:4px">ลากป้ายบนผังเพื่อย้ายได้</p></div><div class="sec"><button class="dng" data-act="del">ลบเส้นนี้</button></div>';
+}
 function orphansOf(id) { var n = 0; unionsOf({ id: id }).forEach(function (u) { n += GE.kidsOf(state, u).length; }); return n; }
 function delPerson(id) {
   state.unions.filter(function (u) { return u.a === id || u.b === id; }).forEach(function (u) { state.persons.forEach(function (k) { if (k.from === u.id) { delete k.from; delete k.tw; delete k.twi; } }); });
@@ -230,6 +436,7 @@ function delPerson(id) {
   state.rels = state.rels.filter(function (r) { return r.a !== id && r.b !== id; });
   state.homes.forEach(function (h) { h.ids = h.ids.filter(function (i) { return i !== id; }); });
   state.homes = state.homes.filter(function (h) { return h.ids.length; });
+  state.loops.forEach(function (l) { if (l.mem && l.mem.indexOf(id) >= 0) { loopBake(l); l.mem = l.mem.filter(function (i) { return i !== id; }); var c = l.mem.length ? centroidOf(l.mem) : null; if (c) l.c0 = c; else { delete l.c0; delete l.mem; } } });
   state.persons.forEach(function (k) { if (k.tw === id) { delete k.tw; delete k.twi; } });
   state.persons = state.persons.filter(function (z) { return z.id !== id; });
 }
@@ -254,6 +461,7 @@ function doDelete() {
   else if (s.k === 'u') { delUnion(s.id); label = 'ลบเส้นคู่ชีวิตแล้ว'; }
   else if (s.k === 'r') { state.rels = state.rels.filter(function (r) { return r.id !== s.id; }); label = 'ลบเส้นแล้ว'; }
   else if (s.k === 't') { state.texts = state.texts.filter(function (t) { return t.id !== s.id; }); label = 'ลบข้อความแล้ว'; }
+  else if (s.k === 'd') { state.loops = state.loops.filter(function (t) { return t.id !== s.id; }); label = 'ลบวงที่วาดแล้ว'; }
   else { state.homes = state.homes.filter(function (h) { return h.id !== s.id; }); label = 'ลบวงบ้านแล้ว'; }
   sel = null; renderPanel(); draw(); save();
   toast(label + (orph ? ' — ลูก ' + orph + ' คนหลุดจากพ่อแม่ (เส้นถูกตัด)' : ''), 'ย้อนกลับ', undo);
@@ -316,6 +524,10 @@ function tidy(kind) {
     draw(); save(); toast(moved ? 'จัดตำแหน่งข้อความใหม่ ' + moved + ' คน — ข้อความที่คุณลากเองไม่ถูกแตะ ย้อนกลับได้' : 'ตำแหน่งข้อความดีอยู่แล้ว', moved ? 'ย้อนกลับ' : null, undo);
     return;
   }
+  if (kind === 'rels') {
+    var mm = ixOf(), ch = 0; state.rels.forEach(function (r) { if ((r.wp && r.wp.length) || r.sa || r.sb) return; var a2 = mm[r.a], b2 = mm[r.b]; if (!a2 || !b2) return; var nb = GE.autoBend(a2, b2, state) || 0; if ((r.bend || 0) !== nb) { if (nb) r.bend = nb; else delete r.bend; ch++; } });
+    draw(); save(); toast(ch ? 'ปรับเส้นความสัมพันธ์ ' + ch + ' เส้นให้เลี่ยงคน — เส้นที่คุณปรับเอง (จุดเลี้ยว/ด้านที่ออก) ไม่ถูกแตะ' : 'เส้นความสัมพันธ์เลี่ยงคนดีอยู่แล้ว', ch ? 'ย้อนกลับ' : null, undo); return;
+  }
   if (kind === 'squeeze') { squeezeX(); return; }
   if (kind === 'rows' || kind === 'both') {
     var y0 = Math.min.apply(null, state.persons.map(function (p) { return p.y; }));
@@ -356,6 +568,9 @@ function renderMode() {
   if (!mode) { el.style.display = 'none'; return; }
   var m = ixOf(), h = '';
   if (mode.kind === 'home') h = 'วงบ้านเดียวกัน — คลิกคนที่อยู่ด้วยกัน (เลือกแล้ว ' + mode.ids.length + ' คน — คลิกซ้ำเพื่อเอาออก) <button class="pri" data-act="homedone">เสร็จ</button><button data-act="cancel">ยกเลิก</button>';
+  else if (mode.kind === 'reparent') {
+    h = 'เปลี่ยนพ่อแม่ของ <b>' + esc(pName(m[mode.from])) + '</b> — คลิก <u>เส้นคู่ชีวิตของพ่อแม่ใหม่</u> บนผัง (หรือคลิกตัวพ่อ/แม่ ถ้ามีคู่เดียว) <button data-act="cancel">ยกเลิก</button>';
+  }
   else {
     var f = mode.from && m[mode.from], nm = f ? (GE.dispName(f, ctxFor(fam)) || 'คนที่เลือก') : '';
     h = '<b>' + esc(typeName(mode.type)) + '</b> — ' + (mode.from ? 'คลิก <u>คนที่สอง</u> (ต่อจาก ' + esc(nm) + ')' : 'คลิก <u>คนแรก</u>') + ' <button data-act="cancel">' + (mode.keep ? 'เสร็จ' : 'ยกเลิก') + '</button>';
@@ -403,10 +618,34 @@ function famPanel() {
     '<div class="sec"><p class="mut">คลิกสัญลักษณ์เพื่อแก้ไข · ลากเพื่อย้าย · ลากพื้นที่ว่างเพื่อเลื่อนผัง · ล้อเมาส์หรือถ่างนิ้วเพื่อซูม · ดับเบิลคลิกคนเพื่อพิมพ์ชื่อ · ลูกศรบนคีย์บอร์ดขยับทีละนิด</p></div>';
   return h;
 }
+/* person panel: whose child is this person + buttons to fix it */
+function parentsSec(p) {
+  var u = p.from && state.unions.filter(function (z) { return z.id === p.from; })[0], h = '<div class="sec"><div class="st">พ่อแม่ของคนนี้</div>';
+  if (u) {
+    var n = GE.kidsOf(state, u).length;
+    h += '<p class="mut" style="margin-bottom:6px">เป็นลูกของ <b>' + esc(parentsText(u)) + '</b> (พี่น้องรวมตัวเอง ' + n + ' คน) <button type="button" data-act="selu" data-v="' + u.id + '" style="padding:1px 8px;font-size:12px">เลือกเส้นคู่นี้</button></p>' +
+      '<div class="btns"><button data-act="reparent">เปลี่ยนพ่อแม่…</button><button data-act="unparent">ตัดออกจากพ่อแม่</button></div>';
+  } else {
+    h += '<p class="mut" style="margin-bottom:6px">ยังไม่มีพ่อแม่ในผัง</p><div class="btns"><button data-act="reparent">เลือกพ่อแม่ที่มีอยู่แล้ว…</button></div>';
+  }
+  return h + '</div>';
+}
+/* union panel: the children, each can be cut off or moved to another couple */
+function kidsSec(u) {
+  var ks = GE.kidsOf(state, u).slice().sort(function (a, b) { return a.x - b.x; });
+  var h = '<div class="sec"><div class="st">ลูกของคู่นี้ (' + ks.length + ' คน เรียงซ้าย→ขวา)</div>';
+  if (!ks.length) return h + '<p class="mut">ยังไม่มีลูก</p></div>';
+  ks.forEach(function (k) {
+    h += '<div class="btns" style="align-items:center;margin-bottom:4px"><button type="button" data-act="selp" data-v="' + k.id + '" style="flex:1;text-align:left">' + esc(pName(k)) + (k.dead ? ' †' : '') + '</button><button type="button" data-act="reparent" data-v="' + k.id + '" title="ย้ายไปเป็นลูกของคู่อื่น">เปลี่ยน…</button><button type="button" data-act="unparent" data-v="' + k.id + '" title="ตัดออกจากคู่นี้ (ไม่ลบคน)">ตัดออก</button></div>';
+  });
+  return h + '<p class="mut" style="font-size:12px">“ตัดออก” ไม่ลบคน แค่ไม่ให้เป็นลูกของคู่นี้</p></div>';
+}
 function renderPanel() {
   var h = '', s = findSel(), cm = GE.condMapFor(fam), nm = Object.keys(msel).length;
   if (mode && mode.kind === 'home') {
     h += '<div class="sec"><div class="st">วงสมาชิกที่อยู่ด้วยกัน</div><p class="mut">คลิกคนที่อยู่บ้านเดียวกันบนผัง (เลือกแล้ว ' + mode.ids.length + ' คน)</p><div class="btns"><button class="pri" data-act="homedone">เสร็จ</button><button data-act="cancel">ยกเลิก</button></div></div>';
+  } else if (mode && mode.kind === 'reparent') {
+    h += '<div class="sec"><div class="st">เปลี่ยนพ่อแม่</div><p class="mut">คลิกที่เส้นคู่ชีวิตของพ่อแม่ใหม่บนผัง (เส้นแนวนอนที่ลูกๆ ห้อยลงมา) หรือคลิกตัวพ่อ/แม่ ถ้าเขามีคู่เดียว</p><div class="btns"><button data-act="cancel">ยกเลิก</button></div></div>';
   } else if (mode && mode.kind === 'link') {
     h += '<div class="sec"><div class="st">กำลังเชื่อม</div><p class="mut">คลิกคนที่ต้องการเชื่อมบนผัง</p><div class="btns"><button data-act="cancel">ยกเลิก</button></div></div>';
   } else if (nm > 1 || (nm === 1 && !s)) {
@@ -444,6 +683,7 @@ function renderPanel() {
       '<div class="sw tsw">' + TCOLS.map(function (c) { return '<button class="swb" data-act="lcol" data-v="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
       '<div class="chk"><label><input type="checkbox" data-f="lh"' + (p.lh ? ' checked' : '') + '> ซ่อนข้อความของคนนี้</label></div>' +
       '<div class="btns"><button data-act="lcclear">ล้างสี</button><button data-act="lreset"' + (p.lo ? '' : ' disabled') + '>คืนตำแหน่งข้อความ</button></div></div>' +
+      parentsSec(p) +
       '<div class="sec"><div class="st">เพิ่มญาติ</div><div class="btns">' +
       '<button data-act="spouse">+ คู่สมรส</button><button data-act="child" data-v="M">+ ลูกชาย</button><button data-act="child" data-v="F">+ ลูกหญิง</button>' +
       '<button data-act="parents"' + (p.from ? ' disabled' : '') + '>+ พ่อแม่</button><button data-act="sib" data-v="M">+ พี่น้องชาย</button><button data-act="sib" data-v="F">+ พี่น้องหญิง</button></div></div>' +
@@ -465,12 +705,12 @@ function renderPanel() {
     h += '<div class="sec"><div class="st">เส้นคู่ชีวิต</div><label>ประเภท<select data-f="t">' + Object.keys(GE.UT).map(function (k) { return opt(k, GE.UT[k], u.t); }).join('') + '</select></label>' +
       '<label>ความลึกของเส้น<input type="range" data-f="dp" min="0" max="70" value="' + (u.dp || 0) + '"></label>' +
       '<div class="btns"><button data-act="uchild" data-v="M">+ ลูกชาย</button><button data-act="uchild" data-v="F">+ ลูกหญิง</button></div></div>' +
+      kidsSec(u) +
       '<div class="sec"><button class="dng" data-act="del">ลบเส้นคู่ชีวิตนี้</button></div>';
+  } else if (sel.k === 'd') {
+    h += loopSec(s);
   } else if (sel.k === 'r') {
-    var r = s;
-    h += '<div class="sec"><div class="st">ความสัมพันธ์</div><label>ประเภท<select data-f="t">' + Object.keys(GE.RELS).map(function (k) { return opt(k, GE.RELS[k], r.t); }).join('') + '</select></label>' +
-      '<p class="mut">ลากจุดวงกลมสีส้มกลางเส้นเพื่อปรับความโค้ง</p>' +
-      '<div class="btns" style="margin-top:8px"><button data-act="swap">สลับทิศลูกศร</button><button data-act="straight">ทำให้ตรง</button></div></div><div class="sec"><button class="dng" data-act="del">ลบเส้นนี้</button></div>';
+    h += relSec(s);
   } else {
     var hm = ixOf(), mem = (s.ids || []).map(function (i) { return hm[i] ? (GE.dispName(hm[i], ctxFor(fam)) || 'ไม่มีชื่อ') : null; }).filter(Boolean);
     h += '<div class="sec"><div class="st">วงสมาชิกที่อยู่ด้วยกัน</div><p class="mut">สมาชิก ' + mem.length + ' คน: ' + esc(mem.join(', ')) + '</p><div class="btns"><button data-act="homeedit">แก้สมาชิก (คลิกคนเพิ่ม/เอาออก)</button><button class="dng" data-act="del">ลบวงนี้</button></div>' +
@@ -504,7 +744,7 @@ function bindPanel() {
     var s = findSel(); if (!s) return;
     if (!fieldPushed) { pushSnap(fieldSnap || snapStr()); fieldPushed = true; }
     var f = t.getAttribute('data-f'), v = t.type === 'checkbox' ? t.checked : t.value;
-    if (f === 'dp' || f === 's') v = +v;
+    if (f === 'dp' || f === 's' || f === 'w') v = +v;
     if (f === 'ls') v = v === '' ? '' : +v;
     if (f === 'byr') { v = String(v).replace(/\D/g, '').slice(0, 4); if (v !== t.value) t.value = v; if (v !== '') v = +v; }
     if (f === 'age' && /^\d{4}$/.test(String(v)) && +v >= 1800) { /* typed a birth year in the age box: move it */
@@ -537,6 +777,14 @@ function onAct(e) {
     mode = null;
   }
   else if (act === 'cancel') { mode = null; }
+  else if (act === 'reparent') { var rp = v || (s && sel && sel.k === 'p' ? s.id : null); if (rp) { mode = { kind: 'reparent', from: rp }; sel = null; msel = {}; } }
+  else if (act === 'unparent') { var up = v || (s && sel && sel.k === 'p' ? s.id : null); if (up) { unsetParents(up); return; } }
+  else if (act === 'loopshape' && s && sel && sel.k === 'd') { pushSnap(); loopReshape(s, v); }
+  else if (act === 'loopwrap' && s && sel && sel.k === 'd') { pushSnap(); if (!loopWrap(s)) toast('ยังไม่มีสมาชิกในวง'); }
+  else if (act === 'loopgrow' && s && sel && sel.k === 'd') { pushSnap(); toast(loopGrow(s) ? 'ขยายวงให้พ้นตัวคนแล้ว' : 'ขยายแล้วก็ยังโดนตัวคน — ลองกด “ห่อให้พอดีสมาชิก”'); }
+  else if (act === 'loopmem' && s && sel && sel.k === 'd') { pushSnap(); loopRetake(s); toast('นับใหม่: มี ' + (s.mem || []).length + ' คนอยู่ในวง'); }
+  else if (act === 'selu') { sel = { k: 'u', id: v }; msel = {}; }
+  else if (act === 'selp') { sel = { k: 'p', id: v }; msel = {}; }
   else if (act === 'color' && s) { pushSnap(); s.c = +v; }
   else if (act === 'cond' && s) { pushSnap(); var a = s.cond || []; var i = a.indexOf(v); if (i >= 0) a.splice(i, 1); else a.push(v); if (a.length) s.cond = a; else delete s.cond; }
   else if (act === 'addtext') { addTextBox(); return; }
@@ -560,8 +808,12 @@ function onAct(e) {
   else if (act === 'sib' && s) { pushSnap(); c = addSibling(s, v); sel = { k: 'p', id: c.id }; }
   else if (act === 'link' && s) { startLink(s.id, $('#linktype').value); return; }
   else if (act === 'untwin' && s) { pushSnap(); var o = state.persons.filter(function (z) { return z.id === s.tw; })[0]; if (o) { delete o.tw; delete o.twi; } delete s.tw; delete s.twi; }
-  else if (act === 'straight' && s) { pushSnap(); s.bend = 0; }
-  else if (act === 'swap' && s) { pushSnap(); var tmp = s.a; s.a = s.b; s.b = tmp; }
+  else if (act === 'straight' && s) { pushSnap(); s.bend = 0; delete s.wp; }
+  else if (act === 'wpadd' && s && sel && sel.k === 'r') { pushSnap(); if (!relAddWp(s)) toast('เส้นสั้นเกินไปที่จะเพิ่มจุดเลี้ยว'); }
+  else if (act === 'wpclear' && s && sel && sel.k === 'r') { pushSnap(); delete s.wp; }
+  else if (act === 'relauto' && s && sel && sel.k === 'r') { pushSnap(); relAuto(s); }
+  else if (act === 'rlreset' && s && sel && sel.k === 'r') { pushSnap(); delete s.lo; }
+  else if (act === 'swap' && s) { pushSnap(); var tmp = s.a; s.a = s.b; s.b = tmp; var tsd = s.sa; if (s.sb) s.sa = s.sb; else delete s.sa; if (tsd) s.sb = tsd; else delete s.sb; if (s.bend) s.bend = -s.bend; if (s.wp) s.wp = s.wp.map(function (w) { return [Math.round((1 - w[0]) * 1000) / 1000, -w[1]]; }).reverse(); } /* the picture stays the same, only the arrow flips */
   else if (act === 'del') { doDelete(); return; }
   else if (act === 'mdel') { doDeleteMulti(); return; }
   else if (act === 'brk' && s && sel && sel.k === 'p') { pushSnap(); if (s.brk) delete s.brk; else s.brk = 1; }
@@ -580,16 +832,20 @@ function onAct(e) {
 
 /* ================= pointer ================= */
 var drag = null, ptrs = {}, pinch = null, nudgeT = 0;
+var lastTap = { k: '', t: 0, x: 0, y: 0 };
+/* own double-tap test: the chart is redrawn on the first press, so the browser's dblclick never reaches the line */
+function dblTap(k, e) { var now = Date.now(), hit = lastTap.k === k && now - lastTap.t < 400 && Math.abs(e.clientX - lastTap.x) < 10 && Math.abs(e.clientY - lastTap.y) < 10; lastTap = hit ? { k: '', t: 0, x: 0, y: 0 } : { k: k, t: now, x: e.clientX, y: e.clientY }; return hit; }
 function dist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
 function bindCanvas() {
   svg.addEventListener('pointerdown', function (e) {
     ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
     if (Object.keys(ptrs).length === 2) {
       var k = Object.keys(ptrs), a = ptrs[k[0]], b = ptrs[k[1]];
-      pinch = { d0: dist(a, b) || 1, w0: view.w, v0: { x: view.x, y: view.y }, c: pt({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 }) }; drag = null; hideMq(); return;
+      pinch = { d0: dist(a, b) || 1, w0: view.w, v0: { x: view.x, y: view.y }, c: pt({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 }) }; drag = null; hideMq(); var ik = svg.querySelector('#inkp'); if (ik) ik.parentNode.removeChild(ik); return;
     }
     if (e.button > 0) return;
-    var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
+    var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-did],[data-wh],[data-rlid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
+    if (drawMode) { drag = { k: 'ink', pts: [[q.x, q.y]] }; try { svg.setPointerCapture(e.pointerId); } catch (_) { } return; } /* pen mode: every stroke is drawing, even when it starts on a person */
     if (snipMode) { drag = { k: 'mq', c0: { x: e.clientX, y: e.clientY }, snip: true }; return; } /* snipping-tool style: drag a rectangle anywhere */
     var onThing = tg && (tg.getAttribute('data-pid') || tg.getAttribute('data-lid') || tg.getAttribute('data-tid')); /* people / labels / text boxes keep their normal click-and-drag even while the cut mode is on */
     var thr = 10 * view.w / (svg.clientWidth || 1000), hitI = -1;
@@ -600,6 +856,22 @@ function bindCanvas() {
       if (hitI >= 0) cuts.splice(hitI, 1); else cuts.push(Math.round(q.x));
       toast(hitI >= 0 ? 'ลบจุดตัดแล้ว (เหลือ ' + brkCount() + ' จุด)' : 'วางจุดตัดแล้ว (' + brkCount() + ' จุด)'); renderPanel(); draw(); save(); return;
     }
+    if (mode && mode.kind === 'reparent') { /* pick the new parents: click a couple line, or a person who has exactly one couple */
+      var ru = tg && tg.getAttribute('data-uid'), rpid = tg && tg.getAttribute('data-pid'), why = '';
+      if (rpid) {
+        var us = state.unions.filter(function (z) { return z.a === rpid || z.b === rpid; });
+        if (us.length === 1) ru = us[0].id;
+        else if (!us.length) { /* nobody's couple yet: make a one-parent line, like "+ ลูก" does */
+          if (rpid === mode.from) { toast('เลือกคนอื่นที่ไม่ใช่คนเดิม'); return; }
+          var before = snapStr(), nu = { id: newId('u'), a: rpid, b: null, t: 'married' }; state.unions.push(nu);
+          why = setParents(mode.from, nu.id, before);
+          if (why) { state.unions = state.unions.filter(function (z) { return z.id !== nu.id; }); toast(why); }
+          return;
+        } else { toast('คนนี้มีหลายคู่ — คลิกที่เส้นคู่ชีวิตของคู่ที่ต้องการแทน'); return; }
+      }
+      if (ru) { why = setParents(mode.from, ru); if (why) toast(why); }
+      return;
+    }
     if (mode) {
       if (tg && tg.getAttribute('data-pid')) {
         var id = tg.getAttribute('data-pid');
@@ -608,7 +880,13 @@ function bindCanvas() {
       }
       return;
     }
-    if (tg && tg.getAttribute('data-bh')) { drag = { k: 'bend', id: tg.getAttribute('data-bh'), snap: snapStr(), moved: false }; }
+    if (tg && tg.getAttribute('data-wh')) {
+      var whp = tg.getAttribute('data-wh').split(':'), whr = state.rels.filter(function (z) { return z.id === whp[0]; })[0];
+      if (dblTap('wh:' + whp.join(':'), e)) { if (whr && whr.wp) { pushSnap(); whr.wp.splice(+whp[1], 1); if (!whr.wp.length) delete whr.wp; renderPanel(); draw(); save(); toast('ลบจุดเลี้ยวแล้ว', 'ย้อนกลับ', undo); } return; }
+      drag = { k: 'wp', id: whp[0], i: +whp[1], snap: snapStr(), moved: false };
+    }
+    else if (tg && tg.getAttribute('data-rlid')) { var rlid = tg.getAttribute('data-rlid'), rl_ = state.rels.filter(function (z) { return z.id === rlid; })[0]; if (rl_) { msel = {}; select({ k: 'r', id: rlid }); drag = { k: 'rlabel', id: rlid, q0: q, lo0: (rl_.lo || [0, 0]).slice(), moved: false, snap: snapStr() }; } }
+    else if (tg && tg.getAttribute('data-bh')) { drag = { k: 'bend', id: tg.getAttribute('data-bh'), snap: snapStr(), moved: false }; }
     else if (tg && tg.getAttribute('data-lid')) {
       var lid = tg.getAttribute('data-lid'), lp_ = ixOf()[lid]; if (!lp_) return;
       if (e.shiftKey || selMode) { msel[lid] = 1; sel = null; renderPanel(); draw(); return; }
@@ -630,8 +908,13 @@ function bindCanvas() {
       var orig = {}; state.persons.forEach(function (p) { if (set[p.id]) orig[p.id] = { x: p.x, y: p.y }; });
       drag = { k: 'p', id: pid, q0: q, orig: orig, moved: false, snap: snapStr() };
     } else if (tg && tg.getAttribute('data-uid')) select({ k: 'u', id: tg.getAttribute('data-uid') });
-    else if (tg && tg.getAttribute('data-rid')) select({ k: 'r', id: tg.getAttribute('data-rid') });
+    else if (tg && tg.getAttribute('data-rid')) {
+      var rid = tg.getAttribute('data-rid'), rr = state.rels.filter(function (z) { return z.id === rid; })[0];
+      if (dblTap('rid:' + rid, e) && rr) { pushSnap(); sel = { k: 'r', id: rid }; msel = {}; relAddWp(rr, q); renderPanel(); draw(); save(); toast('เพิ่มจุดเลี้ยวแล้ว — ลากวงกลมสีส้มเพื่อย้าย', 'ย้อนกลับ', undo); return; }
+      select({ k: 'r', id: rid });
+    }
     else if (tg && tg.getAttribute('data-hid')) select({ k: 'h', id: tg.getAttribute('data-hid') });
+    else if (tg && tg.getAttribute('data-did')) { var did = tg.getAttribute('data-did'), lp_ = state.loops.filter(function (z) { return z.id === did; })[0]; if (lp_) { msel = {}; select({ k: 'd', id: did }); drag = { k: 'loop', id: did, q0: q, pts0: lp_.pts.map(function (z) { return z.slice(); }), src0: (lp_.src || []).map(function (z) { return z.slice(); }), moved: false, snap: snapStr() }; } }
     else {
       if (e.shiftKey || selMode) { drag = { k: 'mq', c0: { x: e.clientX, y: e.clientY } }; }
       else { var had = sel || Object.keys(msel).length; sel = null; msel = {}; if (had) { renderPanel(); draw(); } drag = { k: 'pan', c0: { x: e.clientX, y: e.clientY }, v0: { x: view.x, y: view.y } }; }
@@ -657,6 +940,31 @@ function bindCanvas() {
       var g = GE.relGeom(rr, ixOf()); if (!g) return; var q = pt(e);
       if (!drag.moved) { drag.moved = true; pushSnap(drag.snap); }
       var bnd = 2 * ((q.x - g.mid[0]) * g.nrm[0] + (q.y - g.mid[1]) * g.nrm[1]); if (Math.abs(bnd) < 14) bnd = 0; rr.bend = Math.round(bnd); draw(); return;
+    }
+    if (drag.k === 'ink') {
+      var qi = pt(e), la = drag.pts[drag.pts.length - 1];
+      if (Math.hypot(qi.x - la[0], qi.y - la[1]) < 2 * view.w / (svg.clientWidth || 1000)) return; /* skip jitter finer than ~2 screen px */
+      drag.pts.push([qi.x, qi.y]); drag.hold = false; clearTimeout(drag.holdT);
+      (function (dd) { dd.holdT = setTimeout(function () { /* pen held still ~0.6 s: preview the clean ellipse (like GoodNotes) */ if (drag !== dd || dd.pts.length < 8) return; dd.hold = true; var bb = bboxOf(dd.pts), E = ellipsePts((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, (bb.x1 - bb.x0) / 2, (bb.y1 - bb.y0) / 2, 40, 2), ip2 = svg.querySelector('#inkp'); if (ip2) { ip2.setAttribute('d', 'M' + E.map(function (z) { return z[0].toFixed(1) + ' ' + z[1].toFixed(1); }).join('L') + 'Z'); ip2.setAttribute('stroke-dasharray', '8 5'); } }, 600); })(drag);
+      var ip = svg.querySelector('#inkp'); if (!ip) { svg.insertAdjacentHTML('beforeend', '<path id="inkp" fill="none" stroke="#e8590c" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>'); ip = svg.querySelector('#inkp'); }
+      ip.setAttribute('d', 'M' + drag.pts.map(function (z) { return z[0].toFixed(1) + ' ' + z[1].toFixed(1); }).join('L')); ip.removeAttribute('stroke-dasharray'); return;
+    }
+    if (drag.k === 'wp') {
+      var rw = state.rels.filter(function (z) { return z.id === drag.id; })[0]; if (!rw || !rw.wp || !rw.wp[drag.i]) return;
+      var qw = pt(e), fr = GE.relToFrame(rw, ixOf(), qw.x, qw.y);
+      if (!drag.moved) { drag.moved = true; pushSnap(drag.snap); }
+      rw.wp[drag.i] = [Math.round(fr[0] * 1000) / 1000, Math.round(fr[1])]; draw(); return;
+    }
+    if (drag.k === 'rlabel') {
+      var rq = pt(e), rx = rq.x - drag.q0.x, ry = rq.y - drag.q0.y, rr3 = state.rels.filter(function (z) { return z.id === drag.id; })[0]; if (!rr3) return;
+      if (!drag.moved) { if (Math.abs(rx) + Math.abs(ry) < 3) return; drag.moved = true; pushSnap(drag.snap); }
+      rr3.lo = [Math.round(drag.lo0[0] + rx), Math.round(drag.lo0[1] + ry)]; draw(); return;
+    }
+    if (drag.k === 'loop') {
+      var ql = pt(e), lx = ql.x - drag.q0.x, ly = ql.y - drag.q0.y;
+      if (!drag.moved) { if (Math.abs(lx) + Math.abs(ly) < 4) return; drag.moved = true; pushSnap(drag.snap); }
+      var lo_ = state.loops.filter(function (z) { return z.id === drag.id; })[0]; if (lo_) { lo_.pts = drag.pts0.map(function (z) { return [Math.round(z[0] + lx), Math.round(z[1] + ly)]; }); if (drag.src0.length) lo_.src = drag.src0.map(function (z) { return [Math.round(z[0] + lx), Math.round(z[1] + ly)]; }); }
+      draw(); return;
     }
     if (drag.k === 'label' || drag.k === 'text') {
       var q3 = pt(e), ex = q3.x - drag.q0.x, ey = q3.y - drag.q0.y;
@@ -689,7 +997,8 @@ function bindCanvas() {
         state.persons.forEach(function (p) { if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) msel[p.id] = 1; });
       } else { msel = {}; }
       renderPanel(); draw();
-    } else if (drag && (drag.k === 'p' || drag.k === 'bend' || drag.k === 'label' || drag.k === 'text') && drag.moved) { save(); renderPanel(); }
+    } else if (drag && drag.k === 'ink') { finishInk(drag); }
+    else if (drag && (drag.k === 'p' || drag.k === 'bend' || drag.k === 'label' || drag.k === 'text' || drag.k === 'loop' || drag.k === 'wp' || drag.k === 'rlabel') && drag.moved) { save(); renderPanel(); }
     drag = null;
   }
   svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
@@ -703,7 +1012,7 @@ function bindCanvas() {
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select';
     if (document.querySelector('dialog[open]')) return;
-    if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (brkMode && $('#brkmode')) { $('#brkmode').click(); } else if (snipMode && $('#snipmode')) { $('#snipmode').click(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
+    if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (drawMode && $('#drawmode')) { $('#drawmode').click(); } else if (brkMode && $('#brkmode')) { $('#brkmode').click(); } else if (snipMode && $('#snipmode')) { $('#snipmode').click(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing) { e.preventDefault(); redo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); toast('บันทึกในเครื่องแล้ว'); }
@@ -974,6 +1283,7 @@ function buildReport(o) {
     st2.persons.forEach(function (p) { if (p.from && !kun[p.from]) delete p.from; });
     st2.rels = st2.rels.filter(function (r) { return keep[r.a] && keep[r.b]; });
     st2.homes.forEach(function (h) { h.ids = h.ids.filter(function (i) { return keep[i]; }); }); st2.homes = st2.homes.filter(function (h) { return h.ids.length; });
+    st2.loops = (st2.loops || []).filter(function (l) { return !(l.mem && l.mem.length) || l.mem.some(function (i) { return keep[i]; }); }); /* a loop stays if any of its people stay */
     cropped = true;
   }
   st2.persons.forEach(function (p) { p.ls = (p.ls || 1) * TS; if (o.repLean) { delete p.edu; delete p.occ; delete p.role; delete p.mig; delete p.risk; delete p.note; } });
@@ -1418,11 +1728,17 @@ function init() {
   $('#zi').onclick = function () { zoomAt(0.8); }; $('#zo').onclick = function () { zoomAt(1.25); }; $('#zf').onclick = fit;
   $('#reltool').innerHTML = '<option value="">＋ เส้นความสัมพันธ์ / คู่ชีวิต / แฝด</option>' + linkOptions();
   $('#reltool').onchange = function () { var v = this.value; this.value = ''; if (!v) return; mode = { kind: 'link', type: v, from: null, keep: true }; sel = null; msel = {}; renderPanel(); draw(); };
-  if ($('#snipmode')) $('#snipmode').onclick = function () { snipMode = !snipMode; if (snipMode && brkMode && $('#brkmode')) $('#brkmode').click(); this.classList.toggle('on', snipMode); this.textContent = snipMode ? '▭ ตัดภาพส่งออก (เปิดอยู่ — ลากกรอบบนผังเพื่อเลือกพื้นที่)' : '▭ ตัดภาพส่งออก'; };
+  if ($('#loopstyle')) { $('#loopstyle').value = loopStyle(); $('#loopstyle').onchange = function () { try { localStorage.setItem('gm2_loopstyle', this.value); } catch (e) { } }; }
+  if ($('#drawmode')) $('#drawmode').onclick = function () {
+    drawMode = !drawMode; this.classList.toggle('on', drawMode);
+    if (drawMode) { if (brkMode && $('#brkmode')) $('#brkmode').click(); if (snipMode && $('#snipmode')) $('#snipmode').click(); if (selMode && $('#selmode')) $('#selmode').click(); mode = null; sel = null; msel = {}; renderPanel(); draw(); }
+    this.textContent = drawMode ? '✎ วาดวงบ้านเอง (เปิดอยู่ — ลากวงรอบคนที่อยู่ด้วยกัน / Esc ปิด)' : '✎ วาดวงบ้านเอง'; svg.style.cursor = drawMode ? 'crosshair' : '';
+  };
+  if ($('#snipmode')) $('#snipmode').onclick = function () { if (drawMode && $('#drawmode')) $('#drawmode').click(); snipMode = !snipMode; if (snipMode && brkMode && $('#brkmode')) $('#brkmode').click(); this.classList.toggle('on', snipMode); this.textContent = snipMode ? '▭ ตัดภาพส่งออก (เปิดอยู่ — ลากกรอบบนผังเพื่อเลือกพื้นที่)' : '▭ ตัดภาพส่งออก'; };
   if ($('#snipclr')) $('#snipclr').onclick = function () { if (!state.snip) { toast('ยังไม่ได้เลือกพื้นที่'); return; } pushSnap(); delete state.snip; draw(); save(); toast('ล้างพื้นที่ที่ตัดไว้แล้ว'); };
-  if ($('#brkmode')) $('#brkmode').onclick = function () { if (!brkMode && snipMode && $('#snipmode')) $('#snipmode').click(); brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกตรงไหนก็ตัดตรงนั้น / คลิกเส้นเพื่อลบ)' : '✂ ตั้งจุดตัดแถว'; };
+  if ($('#brkmode')) $('#brkmode').onclick = function () { if (!brkMode && drawMode && $('#drawmode')) $('#drawmode').click(); if (!brkMode && snipMode && $('#snipmode')) $('#snipmode').click(); brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกตรงไหนก็ตัดตรงนั้น / คลิกเส้นเพื่อลบ)' : '✂ ตั้งจุดตัดแถว'; };
   if ($('#brkclr')) $('#brkclr').onclick = function () { if (!brkCount()) { toast('ยังไม่มีจุดตัด'); return; } pushSnap(); state.persons.forEach(function (q) { delete q.brk; }); state.cuts = []; renderPanel(); draw(); save(); toast('ล้างจุดตัดทั้งหมดแล้ว'); };
-  $('#selmode').onclick = function () { selMode = !selMode; this.classList.toggle('on', selMode); this.textContent = selMode ? '☑ เลือกหลายคน (เปิดอยู่)' : '☐ เลือกหลายคน'; };
+  $('#selmode').onclick = function () { if (!selMode && drawMode && $('#drawmode')) $('#drawmode').click(); selMode = !selMode; this.classList.toggle('on', selMode); this.textContent = selMode ? '☑ เลือกหลายคน (เปิดอยู่)' : '☐ เลือกหลายคน'; };
   $('#addText').onclick = addTextBox;
   $('#tidy').onchange = function () { var v = this.value; this.value = ''; if (v) tidy(v); };
   $('#famSel').onchange = function () { setActive(this.value); };

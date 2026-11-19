@@ -228,19 +228,48 @@ function textObj(t, selected, o) {
   }
   return out + '<text' + ptr + ' x="' + t.x + '" y="' + t.y + '" text-anchor="' + anc + '" font-size="' + sz + '" font-weight="' + (t.b ? 700 : 400) + '" fill="' + col + '" paint-order="stroke" stroke="#fff" stroke-width="' + Math.max(3, sz * 0.2).toFixed(1) + '" stroke-linejoin="round">' + tx + '</text>';
 }
+/* relationship line placement. Stored on the relation: bend (one curve), wp = waypoints [[u,v]..] in the frame of the two people
+   (u along a->b, v px sideways, so they follow when the people move), sa/sb = side of the symbol the line leaves from (t|b|l|r, else automatic),
+   lt = label text, lo = label offset */
+function relAnchor(p, side) {
+  var g = 7;
+  if (side === 't') return [p.x, top(p) - g]; if (side === 'b') return [p.x, bot(p) + g];
+  if (side === 'l') return [p.x - half(p) - g, p.y]; if (side === 'r') return [p.x + half(p) + g, p.y];
+  return null;
+}
+function relFrame(a, b) { var dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1; return { dx: dx, dy: dy, d: d, nrm: [-dy / d, dx / d] }; }
+function relToFrame(r, m, x, y) { var a = m[r.a], b = m[r.b], f = relFrame(a, b); return [((x - a.x) * f.dx + (y - a.y) * f.dy) / (f.d * f.d), (x - a.x) * f.nrm[0] + (y - a.y) * f.nrm[1]]; }
+function relFromFrame(a, b, w) { var f = relFrame(a, b); return [a.x + f.dx * w[0] + f.nrm[0] * w[1], a.y + f.dy * w[0] + f.nrm[1] * w[1]]; }
 function relGeom(r, m) {
   var a = m[r.a], b = m[r.b]; if (!a || !b) return null;
   var dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy), s0 = H + 7;
   if (d < 2 * s0 + 6) return null;
-  var bend = r.bend || 0, cx = (a.x + b.x) / 2 - dy / d * bend, cy = (a.y + b.y) / 2 + dx / d * bend;
   function unit(px, py, qx, qy) { var l = Math.sqrt((qx - px) * (qx - px) + (qy - py) * (qy - py)) || 1; return [(qx - px) / l, (qy - py) / l]; }
-  var u1 = unit(a.x, a.y, cx, cy), u2 = unit(b.x, b.y, cx, cy);
-  var p0 = [a.x + u1[0] * s0, a.y + u1[1] * s0], p2 = [b.x + u2[0] * s0, b.y + u2[1] * s0];
-  function B(t) { var k = 1 - t; return [k * k * p0[0] + 2 * k * t * cx + t * t * p2[0], k * k * p0[1] + 2 * k * t * cy + t * t * p2[1]]; }
-  function T(t) { var k = 1 - t, x = 2 * k * (cx - p0[0]) + 2 * t * (p2[0] - cx), y = 2 * k * (cy - p0[1]) + 2 * t * (p2[1] - cy), l = Math.sqrt(x * x + y * y) || 1; return [x / l, y / l]; }
-  var len = 0, pv = B(0);
-  for (var i = 1; i <= 24; i++) { var q = B(i / 24); len += Math.sqrt((q[0] - pv[0]) * (q[0] - pv[0]) + (q[1] - pv[1]) * (q[1] - pv[1])); pv = q; }
-  return { B: B, T: T, len: len, curved: !!bend, mid: [(a.x + b.x) / 2, (a.y + b.y) / 2], nrm: [-dy / d, dx / d] };
+  var ea = relAnchor(a, r.sa), eb = relAnchor(b, r.sb), wps = (r.wp || []).map(function (w) { return relFromFrame(a, b, w); });
+  var bend = r.bend || 0, B, T, len = 0, curved = !!bend || wps.length > 0, i;
+  if (!wps.length) {
+    var cx = (a.x + b.x) / 2 - dy / d * bend, cy = (a.y + b.y) / 2 + dx / d * bend;
+    var u1 = unit(a.x, a.y, cx, cy), u2 = unit(b.x, b.y, cx, cy);
+    var p0 = ea || [a.x + u1[0] * s0, a.y + u1[1] * s0], p2 = eb || [b.x + u2[0] * s0, b.y + u2[1] * s0];
+    B = function (t) { var k = 1 - t; return [k * k * p0[0] + 2 * k * t * cx + t * t * p2[0], k * k * p0[1] + 2 * k * t * cy + t * t * p2[1]]; };
+    T = function (t) { var k = 1 - t, x = 2 * k * (cx - p0[0]) + 2 * t * (p2[0] - cx), y = 2 * k * (cy - p0[1]) + 2 * t * (p2[1] - cy), l = Math.sqrt(x * x + y * y) || 1; return [x / l, y / l]; };
+    var pv = B(0); for (i = 1; i <= 24; i++) { var q = B(i / 24); len += Math.sqrt((q[0] - pv[0]) * (q[0] - pv[0]) + (q[1] - pv[1]) * (q[1] - pv[1])); pv = q; }
+  } else { /* smooth curve through the waypoints (Catmull-Rom), then walked by arc length so the wave/zigzag styles still work */
+    var f0 = wps[0], fl = wps[wps.length - 1], v0 = unit(a.x, a.y, f0[0], f0[1]), v1 = unit(b.x, b.y, fl[0], fl[1]);
+    var pts = [ea || [a.x + v0[0] * s0, a.y + v0[1] * s0]].concat(wps, [eb || [b.x + v1[0] * s0, b.y + v1[1] * s0]]), S = [], n = pts.length;
+    for (i = 0; i < n - 1; i++) {
+      var q0 = pts[Math.max(0, i - 1)], q1 = pts[i], q2 = pts[i + 1], q3 = pts[Math.min(n - 1, i + 2)];
+      var c1 = [q1[0] + (q2[0] - q0[0]) / 6, q1[1] + (q2[1] - q0[1]) / 6], c2 = [q2[0] - (q3[0] - q1[0]) / 6, q2[1] - (q3[1] - q1[1]) / 6];
+      for (var j = 0; j < 16; j++) { var t = j / 16, k = 1 - t; S.push([k * k * k * q1[0] + 3 * k * k * t * c1[0] + 3 * k * t * t * c2[0] + t * t * t * q2[0], k * k * k * q1[1] + 3 * k * k * t * c1[1] + 3 * k * t * t * c2[1] + t * t * t * q2[1]]); }
+    }
+    S.push(pts[n - 1]); var cum = [0];
+    for (i = 1; i < S.length; i++) cum.push(cum[i - 1] + Math.sqrt((S[i][0] - S[i - 1][0]) * (S[i][0] - S[i - 1][0]) + (S[i][1] - S[i - 1][1]) * (S[i][1] - S[i - 1][1])));
+    len = cum[cum.length - 1];
+    var at = function (t) { var s = Math.max(0, Math.min(1, t)) * len, k2 = 1; while (k2 < cum.length - 1 && cum[k2] < s) k2++; return [k2, s]; };
+    B = function (t) { var w = at(t), k2 = w[0], seg = (cum[k2] - cum[k2 - 1]) || 1, u = (w[1] - cum[k2 - 1]) / seg; return [S[k2 - 1][0] + (S[k2][0] - S[k2 - 1][0]) * u, S[k2 - 1][1] + (S[k2][1] - S[k2 - 1][1]) * u]; };
+    T = function (t) { var k2 = at(t)[0], x = S[k2][0] - S[k2 - 1][0], y = S[k2][1] - S[k2 - 1][1], l = Math.sqrt(x * x + y * y) || 1; return [x / l, y / l]; };
+  }
+  return { B: B, T: T, len: len, curved: curved, mid: [(a.x + b.x) / 2, (a.y + b.y) / 2], nrm: [-dy / d, dx / d], wps: wps };
 }
 function relSvg(r, m, selected, o) {
   var g = relGeom(r, m); if (!g) return '';
@@ -278,7 +307,14 @@ function relSvg(r, m, selected, o) {
   if (selected) out += '<path d="' + center + '" fill="none" stroke="' + ACC + '" stroke-opacity=".35" stroke-width="12" stroke-linecap="round"/>';
   out += '<path d="' + pth + '" fill="none" stroke="' + REL + '" stroke-width="' + W + '" stroke-linecap="round" stroke-linejoin="round"' + dash + '/>' + arrow;
   if (!(o && o.nosel)) out += '<path data-rid="' + r.id + '" d="' + center + '" fill="none" stroke="#000" stroke-opacity="0" stroke-width="16" pointer-events="stroke" style="cursor:pointer"/>';
-  if (selected && !(o && o.nosel)) { var hp = g.B(0.5); out += '<circle data-bh="' + r.id + '" cx="' + hp[0].toFixed(1) + '" cy="' + hp[1].toFixed(1) + '" r="8" fill="#fff" stroke="' + ACC + '" stroke-width="2.4" style="cursor:grab"/>'; }
+  if (r.lt) { /* label on the line, above it by default; draggable (lo) */
+    var lm = g.B(0.5), lt_ = g.T(0.5), ln = [-lt_[1], lt_[0]], sg = ln[1] <= 0 ? 1 : -1, lx = lm[0] + sg * ln[0] * 15 + (r.lo ? r.lo[0] : 0), ly = lm[1] + sg * ln[1] * 15 + 4 + (r.lo ? r.lo[1] : 0);
+    out += '<text' + ((o && o.nosel) ? '' : ' data-rlid="' + r.id + '" style="cursor:grab"') + ' x="' + lx.toFixed(1) + '" y="' + ly.toFixed(1) + '" text-anchor="middle" font-size="13" font-weight="600" fill="' + REL + '" paint-order="stroke" stroke="#fff" stroke-width="3.5" stroke-linejoin="round">' + $esc(r.lt) + '</text>';
+  }
+  if (selected && !(o && o.nosel)) {
+    if (g.wps.length) g.wps.forEach(function (w, i) { out += '<circle data-wh="' + r.id + ':' + i + '" cx="' + w[0].toFixed(1) + '" cy="' + w[1].toFixed(1) + '" r="8" fill="#fff" stroke="' + ACC + '" stroke-width="2.4" style="cursor:grab"/><circle cx="' + w[0].toFixed(1) + '" cy="' + w[1].toFixed(1) + '" r="2.5" fill="' + ACC + '" pointer-events="none"/>'; });
+    else { var hp = g.B(0.5); out += '<circle data-bh="' + r.id + '" cx="' + hp[0].toFixed(1) + '" cy="' + hp[1].toFixed(1) + '" r="8" fill="#fff" stroke="' + ACC + '" stroke-width="2.4" style="cursor:grab"/>'; }
+  }
   return out;
 }
 function autoBend(A, B, st) {
@@ -468,6 +504,36 @@ function homeOutsiders(st, h) {
   st.persons.forEach(function (p) { if (h.ids.indexOf(p.id) < 0 && skelDist(sk, p.x, p.y) < R + H * 0.4) n++; });
   return n;
 }
+/* ---------- hand-drawn household loops (state.loops: [{id, pts:[[x,y]..], mem:[personIds], c0:[x,y], t, c, w, ds, raw, fix}]) ---------- */
+/* a loop follows its members: it moves by how far the members' centre has moved since the loop was drawn (unless fix) */
+function loopPts(st, l, m) {
+  m = m || ixOf(st); var dx = 0, dy = 0;
+  if (!l.fix && l.mem && l.mem.length && l.c0) {
+    var ps = l.mem.map(function (i) { return m[i]; }).filter(Boolean);
+    if (ps.length === l.mem.length) {
+      dx = ps.reduce(function (a, p) { return a + p.x; }, 0) / ps.length - l.c0[0];
+      dy = ps.reduce(function (a, p) { return a + p.y; }, 0) / ps.length - l.c0[1];
+    }
+  }
+  return (l.pts || []).map(function (q) { return [q[0] + dx, q[1] + dy]; });
+}
+function loopD(P, raw) {
+  var n = P.length, f = function (v) { return v.toFixed(1); }; if (n < 3) return '';
+  if (raw) return 'M' + P.map(function (q) { return f(q[0]) + ' ' + f(q[1]); }).join('L') + 'Z';
+  var d = 'M' + f(P[0][0]) + ' ' + f(P[0][1]);
+  for (var i = 0; i < n; i++) {
+    var p0 = P[(i - 1 + n) % n], p1 = P[i], p2 = P[(i + 1) % n], p3 = P[(i + 2) % n];
+    d += 'C' + f(p1[0] + (p2[0] - p0[0]) / 6) + ' ' + f(p1[1] + (p2[1] - p0[1]) / 6) + ' ' + f(p2[0] - (p3[0] - p1[0]) / 6) + ' ' + f(p2[1] - (p3[1] - p1[1]) / 6) + ' ' + f(p2[0]) + ' ' + f(p2[1]);
+  }
+  return d + 'Z';
+}
+function pointIn(P, x, y) {
+  var inside = false;
+  for (var i = 0, j = P.length - 1; i < P.length; j = i++) {
+    if (((P[i][1] > y) !== (P[j][1] > y)) && (x < (P[j][0] - P[i][0]) * (y - P[i][1]) / ((P[j][1] - P[i][1]) || 1e-9) + P[i][0])) inside = !inside;
+  }
+  return inside;
+}
 function inner(st, o) {
   o = o || {};
   MONO = !!o.mono; INK = MONO ? '#000' : '#234e8c'; REL = MONO ? '#000' : '#8e3a8a';
@@ -497,6 +563,15 @@ function inner(st, o) {
       back.push('<ellipse' + g2 + stk + '/>'); if (!o.nosel) homeHit.push('<ellipse' + g2 + hs + '/>');
     }
     if (h.label) labs.push('<text x="' + lx + '" y="' + ly + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + hc + '" paint-order="stroke" stroke="#fff" stroke-width="3" pointer-events="none">' + $esc(h.label) + '</text>');
+  });
+
+  (st.loops || []).forEach(function (l) {
+    var P = loopPts(st, l, m), d = loopD(P, l.raw); if (!d) return;
+    var on = sel_ && sel_.k === 'd' && sel_.id === l.id, col = l.c || (MONO ? INK : (o.hhc || INK)), w = l.w || (MONO ? 1.4 : 2.2);
+    if (on) back.push('<path d="' + d + '" fill="none" stroke="' + ACC + '" stroke-opacity=".4" stroke-width="' + (w + 8) + '" stroke-linejoin="round" pointer-events="none"/>');
+    back.push('<path d="' + d + '" fill="none" stroke="' + col + '" stroke-width="' + w + '" stroke-linejoin="round" stroke-linecap="round"' + (l.ds ? ' stroke-dasharray="' + (w * 4.5).toFixed(1) + ' ' + (w * 3).toFixed(1) + '"' : '') + ' pointer-events="none"/>');
+    if (!o.nosel) homeHit.push('<path d="' + d + '" fill="none" stroke="#000" stroke-opacity="0" stroke-width="16" data-did="' + l.id + '" pointer-events="stroke" style="cursor:pointer"/>');
+    if (l.t) { var tx = P.reduce(function (a, q) { return a + q[0]; }, 0) / P.length, ty = Math.min.apply(null, P.map(function (q) { return q[1]; })) - 8; labs.push('<text x="' + tx.toFixed(1) + '" y="' + ty.toFixed(1) + '" text-anchor="middle" font-size="13" font-weight="600" fill="' + col + '" paint-order="stroke" stroke="#fff" stroke-width="3" pointer-events="none">' + $esc(l.t) + '</text>'); }
   });
 
   st.unions.forEach(function (u) {
@@ -560,9 +635,10 @@ function inner(st, o) {
 }
 
 function bounds(st, o) {
-  var T = st.texts || [];
-  if (!st.persons.length && !T.length) return { x: 0, y: 0, w: 800, h: 500 };
+  var T = st.texts || [], LP = st.loops || [];
+  if (!st.persons.length && !T.length && !LP.length) return { x: 0, y: 0, w: 800, h: 500 };
   var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, lx = (o && o.gen) ? 130 : 80;
+  LP.forEach(function (l) { loopPts(st, l).forEach(function (q) { x0 = Math.min(x0, q[0] - 24); x1 = Math.max(x1, q[0] + 24); y0 = Math.min(y0, q[1] - 36); y1 = Math.max(y1, q[1] + 24); }); });
   st.persons.forEach(function (p) {
     var lo = p.lo || [0, 0];
     x0 = Math.min(x0, p.x - lx + Math.min(0, lo[0])); x1 = Math.max(x1, p.x + 90 + Math.max(0, lo[0]));
@@ -612,7 +688,7 @@ function legendItems(st, o, mode) {
     if (std || st.unions.some(function (u) { return u.b && u.t === t; })) add(lab, mini([mp('a', 'M', 28, 22), mp('b', 'F', 112, 22)], [{ id: 'u', a: 'a', b: 'b', t: t }], 0, 0, '0 0 140 70', mo));
   }
   un('married', 'แต่งงาน'); un('cohab', 'อยู่ด้วยกัน'); un('divorced', 'หย่าร้างหรือแยกกันอยู่');
-  if (std || st.homes.length) add('สมาชิกที่อยู่ด้วยกัน', mini([mp('a', 'M', 40, 40), mp('b', 'F', 100, 40)], [{ id: 'u', a: 'a', b: 'b', t: 'married' }], 0, [{ id: 'h', ids: ['a', 'b'] }], '0 0 140 84', mo));
+  if (std || st.homes.length || (st.loops && st.loops.length)) add('สมาชิกที่อยู่ด้วยกัน', mini([mp('a', 'M', 40, 40), mp('b', 'F', 100, 40)], [{ id: 'u', a: 'a', b: 'b', t: 'married' }], 0, [{ id: 'h', ids: ['a', 'b'] }], '0 0 140 84', mo));
   Object.keys(RELS).forEach(function (k) {
     if (std || st.rels.some(function (r) { return r.t === k; })) add(RELS[k].replace(/ \(.*\)/, ''), mini([mp('a', 'M', 26, 30), mp('b', 'F', 114, 30)], 0, [{ id: 'r', a: 'a', b: 'b', t: k }], 0, '0 0 140 60', mo));
   });
@@ -645,6 +721,6 @@ G.GE = {
   H: H, INK: INK, ACC: ACC, FONT: FONT, FILLS: FILLS, FILL_NAMES: FILL_NAMES, RELS: RELS, UT: UT, STS: STS, SEX: SEX, ROMAN: ROMAN,
   COND_PRESETS: COND_PRESETS, condMapFor: condMapFor, ixOf: ixOf, isSmall: isSmall, half: half, top: top, bot: bot,
   inner: inner, ugeo: ugeo, bounds: bounds, relGeom: relGeom, autoBend: autoBend, gens: gens, genLabels: genLabels, kidsOf: kidsOf,
-  autoAlias: autoAlias, TEXT_KINDS: TEXT_KINDS, textColor: textColor, KEYFILL: KEYFILL, LEGEND_TITLE: LEGEND_TITLE, dispName: dispName, ageText: ageText, legendItems: legendItems, legendHTML: legendHTML, autoLabels: autoLabels, lineSegs: lineSegs, personBoxes: personBoxes, partnersOf: function (st) { return st.unions.filter(function (u) { return u.a && u.b; }).map(function (u) { return [u.a, u.b]; }); }, isUnk: isUnk, dzList: dzList, homeOutsiders: homeOutsiders, esc: $esc
+  relToFrame: relToFrame, relFromFrame: relFromFrame, loopPts: loopPts, loopD: loopD, pointIn: pointIn, autoAlias: autoAlias, TEXT_KINDS: TEXT_KINDS, textColor: textColor, KEYFILL: KEYFILL, LEGEND_TITLE: LEGEND_TITLE, dispName: dispName, ageText: ageText, legendItems: legendItems, legendHTML: legendHTML, autoLabels: autoLabels, lineSegs: lineSegs, personBoxes: personBoxes, partnersOf: function (st) { return st.unions.filter(function (u) { return u.a && u.b; }).map(function (u) { return [u.a, u.b]; }); }, isUnk: isUnk, dzList: dzList, homeOutsiders: homeOutsiders, esc: $esc
 };
 })(window);
