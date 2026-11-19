@@ -179,7 +179,7 @@ function overlaySnip() {
 }
 function draw() {
   svg.innerHTML = GE.inner(state, ctxFor(fam, { sel: sel, msel: msel, mode: mode }));
-  overlayBreaks(); overlaySnip();
+  overlayBreaks(); overlaySnip(); if (pend) inkRender(null);
   var e = $('#empty'); if (e) e.style.display = state.persons.length ? 'none' : 'flex';
 }
 function select(s) { sel = s; if (s) msel = {}; renderPanel(); draw(); }
@@ -347,10 +347,57 @@ function loopIssues(l, P) {
   var ids = Object.keys(hit); return { mem: ids.filter(function (i) { return mem[i]; }), other: ids.filter(function (i) { return !mem[i]; }) };
 }
 function loopApply(l, shaped) { l.pts = shaped.pts.map(r0); if (shaped.raw) l.raw = true; else delete l.raw; }
+/* ---------- drawing a loop across a long distance: pen may be lifted (pending strokes) and the chart scrolls itself at the edge ---------- */
+var pend = null; /* {strokes: [[[x,y]..], ..]} while a loop is being drawn in several strokes */
+function loopHold() { try { return localStorage.getItem('gm2_loophold') === '1'; } catch (e) { return false; } }
+function inkMulti() { return loopHold() || !!pend; }
+function inkRender(cur) { /* pending strokes + the stroke in progress; dashed grey joins show where the pen jumped */
+  var ss = (pend ? pend.strokes : []).concat(cur && cur.length ? [cur] : []), old = svg.querySelector('#inkp'), oc = svg.querySelector('#inkc');
+  if (!ss.length) { if (old) old.parentNode.removeChild(old); if (oc) oc.parentNode.removeChild(oc); return; }
+  var f = function (z) { return z[0].toFixed(1) + ' ' + z[1].toFixed(1); }, d = ss.map(function (s) { return 'M' + (s.length === 1 ? f(s[0]) + 'L' + f(s[0]) : s.map(f).join('L')); }).join(''), c = '';
+  for (var i = 1; i < ss.length; i++) c += 'M' + f(ss[i - 1][ss[i - 1].length - 1]) + 'L' + f(ss[i][0]);
+  if (!old) { svg.insertAdjacentHTML('beforeend', '<path id="inkc" fill="none" stroke="#e8590c" stroke-opacity=".55" stroke-width="2" stroke-dasharray="4 6" vector-effect="non-scaling-stroke" pointer-events="none"/><path id="inkp" fill="none" stroke="#e8590c" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>'); old = svg.querySelector('#inkp'); oc = svg.querySelector('#inkc'); }
+  old.setAttribute('d', d); old.removeAttribute('stroke-dasharray'); oc.setAttribute('d', c);
+}
+function inkBar() {
+  var el = $('#inkbar'); if (!el) return; if (!pend) { el.style.display = 'none'; return; }
+  el.innerHTML = '<span>ยกปากกาได้: ลากต่อ หรือแตะ/คลิกวางจุด · เลื่อน/ซูมผังได้ตามสบาย (' + pend.strokes.length + ' เส้น)</span><button class="pri" data-ink="close">ปิดวง (Enter)</button><button data-ink="undo">ย้อนเส้นล่าสุด</button><button data-ink="cancel">ยกเลิก (Esc)</button>';
+  el.style.display = 'flex';
+}
+function inkCancel() { if (!pend) return false; pend = null; inkBar(); inkRender(null); return true; }
+function inkUndo() { if (!pend) return; pend.strokes.pop(); if (!pend.strokes.length) pend = null; inkBar(); inkRender(null); }
+function inkClose() {
+  if (!pend) return; var raw = []; pend.strokes.forEach(function (s) { raw = raw.concat(s); }); pend = null; inkBar(); inkRender(null);
+  finishInk({ pts: raw });
+}
+function inkEnd(d) {
+  clearTimeout(d.holdT); if (d.edgeRaf) { cancelAnimationFrame(d.edgeRaf); d.edgeRaf = 0; }
+  if (inkMulti()) { pend = pend || { strokes: [] }; pend.strokes.push(d.pts.length > 1 ? d.pts : [d.pts[0]]); inkRender(null); inkBar(); return; }
+  finishInk(d);
+}
+function inkNearEdge(d) {
+  var r = svg.getBoundingClientRect(), m = 44; return d.cx < r.left + m || d.cx > r.right - m || d.cy < r.top + m || d.cy > r.bottom - m;
+}
+function inkEdge(d) { /* pen near the edge of the canvas: scroll the chart by itself (faster the closer / further out) and keep drawing */
+  if (d.edgeRaf || !inkNearEdge(d)) return;
+  var tick = function () {
+    if (drag !== d) { d.edgeRaf = 0; return; }
+    var r = svg.getBoundingClientRect(), m = 44, vx = 0, vy = 0;
+    if (d.cx < r.left + m) vx = (d.cx - (r.left + m)) / m; else if (d.cx > r.right - m) vx = (d.cx - (r.right - m)) / m;
+    if (d.cy < r.top + m) vy = (d.cy - (r.top + m)) / m; else if (d.cy > r.bottom - m) vy = (d.cy - (r.bottom - m)) / m;
+    if (!vx && !vy) { d.edgeRaf = 0; return; }
+    var k = view.w / (svg.clientWidth || 1000), cl = function (v) { return Math.max(-1.8, Math.min(1.8, v)); };
+    view.x += cl(vx) * 14 * k; view.y += cl(vy) * 14 * k; setVB();
+    var q = pt({ clientX: d.cx, clientY: d.cy }), la = d.pts[d.pts.length - 1];
+    if (Math.hypot(q.x - la[0], q.y - la[1]) > 1) { d.pts.push([q.x, q.y]); inkRender(d.pts); }
+    d.edgeRaf = requestAnimationFrame(tick);
+  };
+  d.edgeRaf = requestAnimationFrame(tick);
+}
 function finishInk(d) {
-  clearTimeout(d.holdT); var ink = svg.querySelector('#inkp'); if (ink) ink.parentNode.removeChild(ink);
+  clearTimeout(d.holdT); inkRender(null);
   var raw = trimOverlap(d.pts), b = bboxOf(raw), w = b.x1 - b.x0, h = b.y1 - b.y0;
-  if (raw.length < 6 || (w < 40 && h < 40)) { toast('เส้นสั้นเกินไป — ลากให้เป็นวงรอบคนที่อยู่ด้วยกัน'); return; }
+  if (raw.length < 3 || (w < 40 && h < 40)) { toast('เส้นสั้นเกินไป — ลากให้เป็นวงรอบคนที่อยู่ด้วยกัน'); return; }
   var kind = d.hold ? 'ellipse' : loopStyle(), shaped = shapeOf(raw, kind);
   var l = { id: newId('d'), src: resampleClosed(raw, 60).map(r0) };
   loopApply(l, shaped);
@@ -845,7 +892,7 @@ function bindCanvas() {
     }
     if (e.button > 0) return;
     var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-did],[data-wh],[data-rlid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
-    if (drawMode) { drag = { k: 'ink', pts: [[q.x, q.y]] }; try { svg.setPointerCapture(e.pointerId); } catch (_) { } return; } /* pen mode: every stroke is drawing, even when it starts on a person */
+    if (drawMode) { drag = { k: 'ink', pts: [[q.x, q.y]], cx: e.clientX, cy: e.clientY }; try { svg.setPointerCapture(e.pointerId); } catch (_) { } return; } /* pen mode: every stroke is drawing, even when it starts on a person */
     if (snipMode) { drag = { k: 'mq', c0: { x: e.clientX, y: e.clientY }, snip: true }; return; } /* snipping-tool style: drag a rectangle anywhere */
     var onThing = tg && (tg.getAttribute('data-pid') || tg.getAttribute('data-lid') || tg.getAttribute('data-tid')); /* people / labels / text boxes keep their normal click-and-drag even while the cut mode is on */
     var thr = 10 * view.w / (svg.clientWidth || 1000), hitI = -1;
@@ -942,12 +989,12 @@ function bindCanvas() {
       var bnd = 2 * ((q.x - g.mid[0]) * g.nrm[0] + (q.y - g.mid[1]) * g.nrm[1]); if (Math.abs(bnd) < 14) bnd = 0; rr.bend = Math.round(bnd); draw(); return;
     }
     if (drag.k === 'ink') {
+      drag.cx = e.clientX; drag.cy = e.clientY; inkEdge(drag);
       var qi = pt(e), la = drag.pts[drag.pts.length - 1];
       if (Math.hypot(qi.x - la[0], qi.y - la[1]) < 2 * view.w / (svg.clientWidth || 1000)) return; /* skip jitter finer than ~2 screen px */
       drag.pts.push([qi.x, qi.y]); drag.hold = false; clearTimeout(drag.holdT);
-      (function (dd) { dd.holdT = setTimeout(function () { /* pen held still ~0.6 s: preview the clean ellipse (like GoodNotes) */ if (drag !== dd || dd.pts.length < 8) return; dd.hold = true; var bb = bboxOf(dd.pts), E = ellipsePts((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, (bb.x1 - bb.x0) / 2, (bb.y1 - bb.y0) / 2, 40, 2), ip2 = svg.querySelector('#inkp'); if (ip2) { ip2.setAttribute('d', 'M' + E.map(function (z) { return z[0].toFixed(1) + ' ' + z[1].toFixed(1); }).join('L') + 'Z'); ip2.setAttribute('stroke-dasharray', '8 5'); } }, 600); })(drag);
-      var ip = svg.querySelector('#inkp'); if (!ip) { svg.insertAdjacentHTML('beforeend', '<path id="inkp" fill="none" stroke="#e8590c" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>'); ip = svg.querySelector('#inkp'); }
-      ip.setAttribute('d', 'M' + drag.pts.map(function (z) { return z[0].toFixed(1) + ' ' + z[1].toFixed(1); }).join('L')); ip.removeAttribute('stroke-dasharray'); return;
+      if (!inkMulti()) (function (dd) { dd.holdT = setTimeout(function () { /* pen held still ~0.6 s: preview the clean ellipse (like GoodNotes) */ if (drag !== dd || dd.pts.length < 8) return; dd.hold = true; var bb = bboxOf(dd.pts), E = ellipsePts((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, (bb.x1 - bb.x0) / 2, (bb.y1 - bb.y0) / 2, 40, 2), ip2 = svg.querySelector('#inkp'); if (ip2) { ip2.setAttribute('d', 'M' + E.map(function (z) { return z[0].toFixed(1) + ' ' + z[1].toFixed(1); }).join('L') + 'Z'); ip2.setAttribute('stroke-dasharray', '8 5'); } }, 600); })(drag);
+      inkRender(drag.pts); return;
     }
     if (drag.k === 'wp') {
       var rw = state.rels.filter(function (z) { return z.id === drag.id; })[0]; if (!rw || !rw.wp || !rw.wp[drag.i]) return;
@@ -997,7 +1044,7 @@ function bindCanvas() {
         state.persons.forEach(function (p) { if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) msel[p.id] = 1; });
       } else { msel = {}; }
       renderPanel(); draw();
-    } else if (drag && drag.k === 'ink') { finishInk(drag); }
+    } else if (drag && drag.k === 'ink') { inkEnd(drag); }
     else if (drag && (drag.k === 'p' || drag.k === 'bend' || drag.k === 'label' || drag.k === 'text' || drag.k === 'loop' || drag.k === 'wp' || drag.k === 'rlabel') && drag.moved) { save(); renderPanel(); }
     drag = null;
   }
@@ -1012,6 +1059,11 @@ function bindCanvas() {
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select';
     if (document.querySelector('dialog[open]')) return;
+    if (pend && !typing) { /* a loop is half-drawn */
+      if (e.key === 'Enter') { e.preventDefault(); inkClose(); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); inkUndo(); return; }
+      if (e.key === 'Escape') { inkCancel(); return; }
+    }
     if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (drawMode && $('#drawmode')) { $('#drawmode').click(); } else if (brkMode && $('#brkmode')) { $('#brkmode').click(); } else if (snipMode && $('#snipmode')) { $('#snipmode').click(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing) { e.preventDefault(); redo(); }
@@ -1728,9 +1780,11 @@ function init() {
   $('#zi').onclick = function () { zoomAt(0.8); }; $('#zo').onclick = function () { zoomAt(1.25); }; $('#zf').onclick = fit;
   $('#reltool').innerHTML = '<option value="">＋ เส้นความสัมพันธ์ / คู่ชีวิต / แฝด</option>' + linkOptions();
   $('#reltool').onchange = function () { var v = this.value; this.value = ''; if (!v) return; mode = { kind: 'link', type: v, from: null, keep: true }; sel = null; msel = {}; renderPanel(); draw(); };
+  if ($('#loophold')) { $('#loophold').checked = loopHold(); $('#loophold').onchange = function () { try { localStorage.setItem('gm2_loophold', this.checked ? '1' : '0'); } catch (e) { } toast(this.checked ? 'โหมดยกปากกาได้: ลากหลายเส้นแล้วกด “ปิดวง” (หรือ Enter) · เลื่อน/ซูมผังระหว่างเส้นได้' : 'ปิดโหมดยกปากกา: ยกปากกาแล้ววงจบทันที'); }; }
+  if ($('#inkbar')) $('#inkbar').onclick = function (e) { var b = e.target.closest('[data-ink]'); if (!b) return; var a = b.getAttribute('data-ink'); if (a === 'close') inkClose(); else if (a === 'undo') inkUndo(); else if (a === 'cancel') inkCancel(); };
   if ($('#loopstyle')) { $('#loopstyle').value = loopStyle(); $('#loopstyle').onchange = function () { try { localStorage.setItem('gm2_loopstyle', this.value); } catch (e) { } }; }
   if ($('#drawmode')) $('#drawmode').onclick = function () {
-    drawMode = !drawMode; this.classList.toggle('on', drawMode);
+    drawMode = !drawMode; this.classList.toggle('on', drawMode); if (!drawMode) inkCancel();
     if (drawMode) { if (brkMode && $('#brkmode')) $('#brkmode').click(); if (snipMode && $('#snipmode')) $('#snipmode').click(); if (selMode && $('#selmode')) $('#selmode').click(); mode = null; sel = null; msel = {}; renderPanel(); draw(); }
     this.textContent = drawMode ? '✎ วาดวงบ้านเอง (เปิดอยู่ — ลากวงรอบคนที่อยู่ด้วยกัน / Esc ปิด)' : '✎ วาดวงบ้านเอง'; svg.style.cursor = drawMode ? 'crosshair' : '';
   };

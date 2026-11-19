@@ -36,6 +36,8 @@
   #mq{display:none;position:absolute;border:1.5px dashed var(--acc);background:rgba(255,122,0,.08);pointer-events:none}
   #modebar{display:none;position:absolute;left:50%;top:12px;transform:translateX(-50%);align-items:center;gap:8px;background:#1f2a44;color:#fff;padding:8px 10px 8px 14px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.2);max-width:92%;flex-wrap:wrap;justify-content:center}
   #modebar button{padding:4px 10px;font-size:13px}
+  #inkbar{display:none;position:absolute;left:50%;top:12px;transform:translateX(-50%);align-items:center;gap:8px;background:#7a2e00;color:#fff;padding:8px 10px 8px 14px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:92%;flex-wrap:wrap;justify-content:center;font-size:13px}
+  #inkbar button{padding:4px 10px;font-size:13px}
   #toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:#1f2a44;color:#fff;padding:8px 14px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:92%;text-align:center;display:flex;gap:10px;align-items:center}
   #toast.act{pointer-events:auto}
   #toast button{padding:2px 10px;background:#fff;color:#1f2a44;border-color:#fff}
@@ -114,6 +116,7 @@
   <select id="reltool" title="เลือกประเภทเส้น แล้วคลิกคนแรกและคนที่สองบนผัง"></select>
   <button id="selmode" title="โหมดเลือกหลายคน: ลากกรอบบนพื้นที่ว่าง หรือแตะทีละคน (ใช้ Shift ค้างบนคอมได้)">☐ เลือกหลายคน</button>
   <button id="drawmode" type="button" title="วาดวงบ้านเองด้วยปากกา/นิ้ว/เมาส์ เหมือนเขียนใน GoodNotes — ลากเป็นวงรอบคนที่อยู่ด้วยกัน (วงจะตามคนเวลาย้าย)">✎ วาดวงบ้านเอง</button>
+  <label class="tgl" title="ติ๊กแล้วยกปากกา/เมาส์ได้ระหว่างวาดวง: เส้นที่ลากไว้ค้างอยู่ เลื่อนหรือซูมผังแล้วลากต่อ (หรือแตะวางจุด) จนกด “ปิดวง” — เหมาะกับคนที่อยู่ไกลกัน"><input type="checkbox" id="loophold"> ยกปากกาได้</label>
   <select id="loopstyle" title="เมื่อวาดวงเสร็จ ให้แอปจัดรูปให้แบบไหน (ปรับทีหลังได้ที่แผงขวา) · ค้างปากกาไว้ ~0.6 วินาทีตอนท้าย = กลายเป็นวงรีเรียบร้อย"><option value="auto">วงที่วาด: ปรับให้สวยอัตโนมัติ</option><option value="smooth">วงที่วาด: เรียบ</option><option value="ellipse">วงที่วาด: วงรี</option><option value="round">วงที่วาด: กล่องมุมมน</option><option value="raw">วงที่วาด: ตามที่ลากจริง</option></select>
   <button id="brkmode" type="button" title="คลิกตรงไหนบนผังก็ได้เพื่อวางเส้นตัดแถวตอนส่งออก (แบบเล่มรายงาน) — คลิกใกล้เส้นเดิมเพื่อลบ">✂ ตั้งจุดตัดแถว</button><button id="brkclr" type="button" title="ล้างจุดตัดแถวทั้งหมด">ล้างจุดตัด</button><button id="snipmode" type="button" title="ลากกรอบสี่เหลี่ยมบนผังเพื่อเลือกพื้นที่ที่จะส่งออก (เหมือนโปรแกรมตัดภาพหน้าจอ)">▭ ตัดภาพส่งออก</button><button id="snipclr" type="button" title="ล้างพื้นที่ที่ตัดไว้">ล้างพื้นที่</button>
   <button id="addText" title="เพิ่มกล่องข้อความอิสระ (ลากย้าย เปลี่ยนสีได้)">＋ ข้อความ</button>
@@ -122,7 +125,7 @@
 </div>
 <div id="nag"></div>
 <div class="main">
-  <div class="cvwrap"><svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg><div id="mq"></div><div id="modebar"></div>
+  <div class="cvwrap"><svg id="cv" xmlns="http://www.w3.org/2000/svg"></svg><div id="mq"></div><div id="modebar"></div><div id="inkbar"></div>
     <div id="empty"><div><b>ผังนี้ยังว่างอยู่</b><br>กด “+ ชาย / + หญิง” ทางขวาเพื่อเริ่ม แล้วใช้ปุ่ม “+ คู่สมรส / ลูก / พ่อแม่” ต่อได้เลย ไม่ต้องลากเส้นเอง<br><button id="loadSample" style="margin-top:8px">ดูผังตัวอย่าง (ข้อมูลสมมติ)</button></div></div>
     <div id="toast"></div></div>
   <aside id="pn"><div id="dyn"></div>
