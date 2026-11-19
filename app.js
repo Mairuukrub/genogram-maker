@@ -25,12 +25,12 @@ var undoMap = {}, redoMap = {}, undoS = [], redoS = [];
 var sel = null, msel = {}, mode = null, selMode = false, brkMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
 var svg, panel, ctr = 0;
 
-function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [] }; }
+function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [], cuts: [] }; }
 function newFam(title) {
   return { id: 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), title: title || '', house: '', place: '', interviewer: '', date: '', alias: false, showNote: true, condText: true, gen: true, typed: false, tcol: {}, pstyle: 'both', adopt: 'caption', hhs: 'ellipse', hhc: '', condFill: false, mono: false, unk: true, unkBlank: false, cx: {}, exp: {}, state: newState(), created: Date.now(), updated: Date.now() };
 }
 function normalize(s) {
-  s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.texts = s.texts || []; s.v = 2;
+  s = s || {}; s.persons = s.persons || []; s.unions = s.unions || []; s.rels = s.rels || []; s.homes = s.homes || []; s.texts = s.texts || []; s.cuts = s.cuts || []; s.v = 2;
   s.persons.forEach(function (p) {
     p.x = +p.x || 0; p.y = +p.y || 0; p.sex = p.sex || 'U';
     var a = String(p.age == null ? '' : p.age).trim();
@@ -162,14 +162,15 @@ function zoomAt(f, cx, cy) {
 }
 function showZoom() { var z = $('#zl'); if (z) z.textContent = Math.round((svg.clientWidth || 1000) / view.w * 100) + '%'; }
 function pt(e) { var p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; var q = p.matrixTransform(svg.getScreenCTM().inverse()); return { x: q.x, y: q.y }; }
-function brkCount() { return state.persons.filter(function (q) { return q.brk; }).length; }
+function brkCount() { return state.persons.filter(function (q) { return q.brk; }).length + (state.cuts || []).length; }
 function overlayBreaks() {
-  var bs = state.persons.filter(function (q) { return q.brk; }); if (!bs.length) return;
+  var bs = state.persons.filter(function (q) { return q.brk; }), cx0 = state.cuts || []; if (!bs.length && !cx0.length) return;
   var boxes = GE.personBoxes(state, ctxFor(fam, {})), ys = state.persons.map(function (q) { return q.y; }), y0 = Math.min.apply(null, ys) - 70, y1 = Math.max.apply(null, ys) + 110, h = '';
   bs.forEach(function (q) {
     var bx = boxes.filter(function (b) { return b.id === q.id; })[0]; if (!bx) return; var x = bx.x0 - 6;
     h += '<line x1="' + x + '" y1="' + y0 + '" x2="' + x + '" y2="' + y1 + '" stroke="#e8590c" stroke-width="2.5" stroke-dasharray="10 7" pointer-events="none"/><text x="' + (x + 6) + '" y="' + (y0 + 4) + '" font-size="16" font-weight="700" fill="#e8590c" pointer-events="none">▶ แถวใหม่</text>';
   });
+  cx0.forEach(function (x) { h += '<line x1="' + x + '" y1="' + y0 + '" x2="' + x + '" y2="' + y1 + '" stroke="#e8590c" stroke-width="2.5" stroke-dasharray="10 7" pointer-events="none"/><text x="' + (x + 6) + '" y="' + (y0 + 4) + '" font-size="16" font-weight="700" fill="#e8590c" pointer-events="none">▶ แถวใหม่</text>'; });
   svg.insertAdjacentHTML('beforeend', h);
 }
 function draw() {
@@ -514,7 +515,7 @@ function onAct(e) {
   else if (act === 'del') { doDelete(); return; }
   else if (act === 'mdel') { doDeleteMulti(); return; }
   else if (act === 'brk' && s && sel && sel.k === 'p') { pushSnap(); if (s.brk) delete s.brk; else s.brk = 1; }
-  else if (act === 'brkclear') { pushSnap(); state.persons.forEach(function (q) { delete q.brk; }); }
+  else if (act === 'brkclear') { pushSnap(); state.persons.forEach(function (q) { delete q.brk; }); state.cuts = []; }
   else if (act === 'mclear') { msel = {}; }
   else if (act === 'mcolor') { pushSnap(); Object.keys(msel).forEach(function (id) { var q = ixOf()[id]; if (q) q.c = +v; }); }
   else if (act === 'malign') {
@@ -539,6 +540,14 @@ function bindCanvas() {
     }
     if (e.button > 0) return;
     var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
+    if (brkMode) { /* place a row cut exactly where clicked (click near an existing cut line to remove it) */
+      var thr = 10 * view.w / (svg.clientWidth || 1000), cuts = state.cuts = state.cuts || [], hitI = -1;
+      cuts.forEach(function (cx, i) { if (Math.abs(cx - q.x) <= thr) hitI = i; });
+      var pidb = tg && tg.getAttribute('data-pid'), pb = pidb && ixOf()[pidb];
+      pushSnap();
+      if (hitI >= 0) cuts.splice(hitI, 1); else if (pb && pb.brk) delete pb.brk; else cuts.push(Math.round(q.x));
+      toast(hitI >= 0 ? 'ลบจุดตัดแล้ว (เหลือ ' + brkCount() + ' จุด)' : 'วางจุดตัดแล้ว (' + brkCount() + ' จุด)'); renderPanel(); draw(); save(); return;
+    }
     if (mode) {
       if (tg && tg.getAttribute('data-pid')) {
         var id = tg.getAttribute('data-pid');
@@ -559,10 +568,6 @@ function bindCanvas() {
     }
     else if (tg && tg.getAttribute('data-pid')) {
       var pid = tg.getAttribute('data-pid');
-      if (brkMode) { /* click a person = start a new export row at this person (click again to undo) */
-        var bqq = ixOf()[pid]; if (bqq) { pushSnap(); if (bqq.brk) delete bqq.brk; else bqq.brk = 1; toast(bqq.brk ? 'ตั้งจุดตัดแถวแล้ว (' + brkCount() + ' จุด)' : 'ยกเลิกจุดตัดแล้ว (' + brkCount() + ' จุด)'); renderPanel(); draw(); save(); }
-        return;
-      }
       if (e.shiftKey || selMode) {
         if (sel && sel.k === 'p' && sel.id !== pid) { msel[sel.id] = 1; } sel = null;
         if (msel[pid]) delete msel[pid]; else msel[pid] = 1; renderPanel(); draw(); return;
@@ -987,6 +992,7 @@ function buildReport(o) {
     }
     var manualCuts = [];
     st2.persons.forEach(function (q) { if (!q.brk) return; var bx = boxes.filter(function (b) { return b.id === q.id; })[0]; if (bx) manualCuts.push(bx.x0 - 6); });
+    (st2.cuts || []).forEach(function (cx) { manualCuts.push(cx); });
     manualCuts = manualCuts.sort(function (a, b) { return a - b; }).filter(function (c, i, arr) { return c > bo.x + 20 && c < bo.x + bo.w - 20 && (!i || c - arr[i - 1] > 30); });
     var Hfull = P.h - 2 * m - HDR - FTR - 2, plan = null;
     if (manualCuts.length) { /* the user placed the row breaks: use exactly those */
@@ -1326,7 +1332,8 @@ function init() {
   $('#zi').onclick = function () { zoomAt(0.8); }; $('#zo').onclick = function () { zoomAt(1.25); }; $('#zf').onclick = fit;
   $('#reltool').innerHTML = '<option value="">＋ เส้นความสัมพันธ์ / คู่ชีวิต / แฝด</option>' + linkOptions();
   $('#reltool').onchange = function () { var v = this.value; this.value = ''; if (!v) return; mode = { kind: 'link', type: v, from: null, keep: true }; sel = null; msel = {}; renderPanel(); draw(); };
-  if ($('#brkmode')) $('#brkmode').onclick = function () { brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกคนที่เป็นหัวแถวใหม่)' : '✂ ตั้งจุดตัดแถว'; };
+  if ($('#brkmode')) $('#brkmode').onclick = function () { brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกตรงไหนก็ตัดตรงนั้น / คลิกเส้นเพื่อลบ)' : '✂ ตั้งจุดตัดแถว'; };
+  if ($('#brkclr')) $('#brkclr').onclick = function () { if (!brkCount()) { toast('ยังไม่มีจุดตัด'); return; } pushSnap(); state.persons.forEach(function (q) { delete q.brk; }); state.cuts = []; renderPanel(); draw(); save(); toast('ล้างจุดตัดทั้งหมดแล้ว'); };
   $('#selmode').onclick = function () { selMode = !selMode; this.classList.toggle('on', selMode); this.textContent = selMode ? '☑ เลือกหลายคน (เปิดอยู่)' : '☐ เลือกหลายคน'; };
   $('#addText').onclick = addTextBox;
   $('#tidy').onchange = function () { var v = this.value; this.value = ''; if (v) tidy(v); };
