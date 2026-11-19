@@ -85,7 +85,7 @@ function ageText(p, o) {
   else if (a) return a;
   else if (p.byr && !p.dead && o && o.refYear) n = o.refYear - (+p.byr);
   if (n == null || isNaN(n) || n < 0 || n > 130) return (o && o.unkBlank) ? 'ไม่ทราบอายุ' : '';
-  return p.dead ? 'ตายอายุ ' + n + ' ปี' : n + ' ปี';
+  return n + ' ปี'; /* dead people show the plain age too (no "ตายอายุ"); the dead symbol and the cause line already say it */
 }
 function condsOf(p, o) { return (p.cond || []).filter(function (k) { return o && o.cm && o.cm[k]; }); }
 /* patterns are drawn inside the symbol only when the family turns it on, and not for people marked "no fill" */
@@ -262,8 +262,9 @@ function relSvg(r, m, selected, o) {
     return s;
   }
   var pth = '', arrow = '', dash = '', t = r.t, W = 2;
-  if (t === 'close') { pth = pl(-3.4) + pl(0) + pl(3.4); W = 1.5; }
-  else if (t === 'vclose') { pth = pl(-5.1) + pl(-1.7) + pl(1.7) + pl(5.1); W = 1.5; }
+  /* manual p.63: close = 2 lines, very close = 3 lines */
+  if (t === 'close') { pth = pl(-2.6) + pl(2.6); W = 1.5; }
+  else if (t === 'vclose') { pth = pl(-3.4) + pl(0) + pl(3.4); W = 1.5; }
   else if (t === 'conflict') { pth = wave(4, 9); W = 1.7; }
   else if (t === 'distant') { pth = pl(0); dash = ' stroke-dasharray="1 6"'; W = 2.4; }
   else if (t === 'control') pth = pl(0);
