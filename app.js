@@ -263,6 +263,51 @@ function doDeleteMulti() {
   var orph = 0; ids.forEach(function (i) { orph += orphansOf(i); delPerson(i); }); msel = {};
   renderPanel(); draw(); save(); toast('ลบ ' + ids.length + ' คนแล้ว' + (orph ? ' — ลูกที่ไม่ได้ถูกลบอีก ' + orph + ' คนหลุดจากพ่อแม่' : ''), 'ย้อนกลับ', undo);
 }
+/* squeeze ("บีบช่องว่างแนวนอน"): slide the right-hand part of the chart left, one vertical cut at a time, as far as no symbol / text overlaps another one
+   (so a gap that only exists on one row can be closed, and the empty corner of a stepped chart is not wasted). Rows keep their y; only x changes. Verified afterwards, reverted if anything would overlap. */
+function textW(t) { var sz = t.s || 15, ls = String(t.t || '').split('\n'); return Math.max.apply(null, ls.map(function (l) { return Array.from(l).length; }).concat([2])) * 0.56 * sz; }
+function textBox(t) { var sz = t.s || 15, w = textW(t), a = t.a || 'middle', x0 = a === 'start' ? t.x : a === 'end' ? t.x - w : t.x - w / 2, n = String(t.t || '').split('\n').length; return { x0: x0, x1: x0 + w, y0: t.y - sz, y1: t.y + n * 1.25 * sz }; }
+function squeezeBoxes() {
+  var out = [], pm = {}; state.persons.forEach(function (p) { pm[p.id] = p; });
+  GE.personBoxes(state, ctxFor(fam)).forEach(function (b) { out.push({ ox: pm[b.id].x, id: b.id, x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1 }); });
+  (state.texts || []).forEach(function (t) { var q = textBox(t), o = { ox: (q.x0 + q.x1) / 2, tid: t.id, x0: q.x0, x1: q.x1, y0: q.y0, y1: q.y1 }; out.push(o); });
+  /* a same-household outline is one obstacle that surrounds its members (moves with them; never cut through) */
+  (state.homes || []).forEach(function (h) { var m = out.filter(function (q) { return q.id && h.ids.indexOf(q.id) >= 0; }); if (m.length < 1) return; out.push({ home: true, ox: m.reduce(function (a, q) { return a + q.ox; }, 0) / m.length, x0: Math.min.apply(null, m.map(function (q) { return q.x0; })) - 34, x1: Math.max.apply(null, m.map(function (q) { return q.x1; })) + 34, y0: Math.min.apply(null, m.map(function (q) { return q.y0; })) - 34, y1: Math.max.apply(null, m.map(function (q) { return q.y1; })) + 34 }); });
+  return out;
+}
+function squeezeOverlaps(bx) { var n = 0; for (var i = 0; i < bx.length; i++) for (var j = i + 1; j < bx.length; j++) { var A = bx[i], B = bx[j]; if (A.home || B.home || (A.id && A.id === B.id)) continue; if (Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0) > 0 && Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0) > 0) n++; } return n; }
+function squeezeX() {
+  var MX = 30, MY = 6, bx = squeezeBoxes(), ov0 = squeezeOverlaps(bx), minX = Math.min.apply(null, bx.map(function (q) { return q.x0; })), maxX = Math.max.apply(null, bx.map(function (q) { return q.x1; })), before = maxX - minX;
+  var save0 = { p: state.persons.map(function (p) { return [p, p.x]; }), t: (state.texts || []).map(function (t) { return [t, t.x]; }), c: (state.cuts || []).slice() }, moved = 0;
+  var pmx = {};
+  for (var it = 0; it < 150; it++) {
+    state.persons.forEach(function (p) { pmx[p.id] = p.x; });
+    var ks = [], seen = {}; bx.forEach(function (q) { if (q.home) return; var k = Math.round(q.ox * 10); if (!seen[k]) { seen[k] = 1; ks.push(q.ox); } }); ks.sort(function (a, b) { return a - b; });
+    var best = 0, bestC = null;
+    for (var i = 0; i + 1 < ks.length; i++) {
+      var c = (ks[i] + ks[i + 1]) / 2, L = [], R = [];
+      if ((state.homes || []).some(function (h) { var xs = h.ids.map(function (id) { return pmx[id]; }).filter(function (v) { return v != null; }); return xs.length > 1 && Math.min.apply(null, xs) <= c && Math.max.apply(null, xs) > c; })) continue; bx.forEach(function (q) { (q.ox > c ? R : L).push(q); });
+      var d = Math.min.apply(null, R.map(function (q) { return q.x0; })) - Math.min.apply(null, L.map(function (q) { return q.x0; }));
+      for (var a = 0; a < L.length && d > best; a++) for (var b = 0; b < R.length; b++) { var A = L[a], B = R[b]; if (B.y0 - MY < A.y1 && A.y0 - MY < B.y1) { var al = B.x0 - A.x1 - MX; if (al < d) d = al; if (d <= best) break; } }
+      if (d > best) { best = d; bestC = c; }
+    }
+    if (best < 4) break;
+    bx.forEach(function (q) { if (q.ox > bestC) { q.ox -= best; q.x0 -= best; q.x1 -= best; } });
+    state.persons.forEach(function (p) { if (p.x > bestC) p.x -= best; }); (state.texts || []).forEach(function (t) { var q = textBox(t); if ((q.x0 + q.x1) / 2 > bestC) t.x -= best; });
+    if (state.cuts) state.cuts = state.cuts.map(function (x) { return x > bestC ? x - best : x; });
+    moved++;
+  }
+  if (!moved) { toast('ไม่มีช่องว่างแนวนอนให้บีบ — ผังชิดกันอยู่แล้ว'); return; }
+  state.persons.forEach(function (p) { p.x = Math.round(p.x * 10) / 10; }); (state.texts || []).forEach(function (t) { t.x = Math.round(t.x * 10) / 10; });
+  var ba = squeezeBoxes(), ov1 = squeezeOverlaps(ba), after = Math.max.apply(null, ba.map(function (q) { return q.x1; })) - Math.min.apply(null, ba.map(function (q) { return q.x0; }));
+  if (ov1 > ov0) { /* labels re-flowed into each other: put everything back */
+    save0.p.forEach(function (z) { z[0].x = z[1]; }); save0.t.forEach(function (z) { z[0].x = z[1]; }); state.cuts = save0.c; draw();
+    toast('บีบแล้วจะมีข้อความ/สัญลักษณ์ทับกัน จึงไม่ได้ย้ายอะไร'); return;
+  }
+  var dropped = !!state.snip; if (dropped) delete state.snip; /* its rectangle was in the old coordinates */
+  draw(); fit(); save();
+  toast('บีบช่องว่างแล้ว: ผังแคบลง ' + Math.round((1 - after / before) * 100) + '% (กว้าง ' + Math.round(before) + ' → ' + Math.round(after) + ')' + (dropped ? ' · กรอบตัดภาพส่งออกเดิมถูกล้าง ให้ลากใหม่' : ''), 'ย้อนกลับ', undo);
+}
 function tidy(kind) {
   if (!state.persons.length) return; pushSnap(); var g = GE.gens(state), moved = 0;
   if (kind === 'labels') {
@@ -271,6 +316,7 @@ function tidy(kind) {
     draw(); save(); toast(moved ? 'จัดตำแหน่งข้อความใหม่ ' + moved + ' คน — ข้อความที่คุณลากเองไม่ถูกแตะ ย้อนกลับได้' : 'ตำแหน่งข้อความดีอยู่แล้ว', moved ? 'ย้อนกลับ' : null, undo);
     return;
   }
+  if (kind === 'squeeze') { squeezeX(); return; }
   if (kind === 'rows' || kind === 'both') {
     var y0 = Math.min.apply(null, state.persons.map(function (p) { return p.y; }));
     state.persons.forEach(function (p) { if (g[p.id] == null) return; var ny = y0 + g[p.id] * 160; if (ny !== p.y) { p.y = ny; moved++; } });
@@ -776,8 +822,9 @@ function buildExport(o) {
     });
     y += ly + rowH;
   }
-  var W = Math.round(cw + 2 * padv), Ht = Math.round(y + padv - 10);
-  function build(wA, hA) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + Ht + '" width="' + wA + '" height="' + hA + '" font-family="' + GE.FONT.replace(/"/g, "'") + '"><style>' + fontCss() + '</style><rect width="' + W + '" height="' + Ht + '" fill="#fff"/>' + parts + '</svg>'; }
+  var W0 = Math.round(cw + 2 * padv), H0 = Math.round(y + padv - 10), rot = !!o.rotate; /* rotate: turn the whole picture 90° counter-clockwise (generations run left→right) so a wide chart fills a portrait page */
+  var W = rot ? H0 : W0, Ht = rot ? W0 : H0;
+  function build(wA, hA) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + Ht + '" width="' + wA + '" height="' + hA + '" font-family="' + GE.FONT.replace(/"/g, "'") + '"><style>' + fontCss() + '</style><rect width="' + W + '" height="' + Ht + '" fill="#fff"/>' + (rot ? '<g transform="translate(0,' + W0 + ') rotate(-90)">' + parts + '</g>' : parts) + '</svg>'; }
   var P = PAPERS[o.paper] || PAPERS.auto, s = null, minPt = null, A = P.w ? P : PAPERS.a4l;
   if (P.w) { s = Math.min((P.w - 2 * o.margin) / W, (P.h - 2 * o.margin) / Ht, 0.35); minPt = 12.5 * s * 72 / 25.4; }
   var miss = state.persons.filter(function (p) { return p.name && !(o.unk !== false && GE.isUnk(p.name)) && !String(p.alias || '').trim(); }).length;
@@ -1234,7 +1281,7 @@ function fname(ext) { return (fam.title || 'genogram').replace(/[\\/:*?"<>|]+/g,
 function renderExportDialog() {
   var o = expOpts(), book = o.mode === 'book' || o.mode === 'one' || o.mode === 'long' || o.mode === 'rep', r = o.mode === 'long' ? buildLong(o) : (o.mode === 'rep' ? buildReport(o) : (book ? buildBook(o) : buildExport(o))), box = $('#expOpts');
   function ck(k, t) { return '<label class="ck"><input type="checkbox" data-eo="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + t + '</label>'; }
-  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + opt('rep', 'แบบเล่มรายงาน: เต็มที่ 1–2 หน้า (ข้อความใหญ่ พับแถวให้เต็มหน้า)', o.mode) + '</select></label>' + (o.mode === 'rep' ? '<label>จำนวนหน้า<select data-eo="repPages">' + opt('1', '1 หน้า', String(o.repPages || 2)) + opt('2', '2 หน้า', String(o.repPages || 2)) + '</select></label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repLean\"' + (o.repLean ? ' checked' : '') + '> ซ่อนบรรทัดรอง (การศึกษา/อาชีพ/บทบาท/ย้ายถิ่น/พฤติกรรม/หมายเหตุ) — เหมาะกับภาพรวม</label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repFit\"' + (o.repFit === false ? '' : ' checked') + '> ย่อเฉพาะป้ายที่ทับกันอัตโนมัติ</label><label>จำนวนแถวที่พับ<select data-eo=\"repRows\">' + opt('0', 'อัตโนมัติ (ให้ตัวใหญ่สุด)', String(o.repRows || 0)) + opt('1', '1 แถว (ไม่พับ)', String(o.repRows || 0)) + opt('2', '2 ชั้น', String(o.repRows || 0)) + opt('3', '3 ชั้น', String(o.repRows || 0)) + '</select></label><label>ขยายข้อความเทียบกับสัญลักษณ์ (เท่า)<input type="number" step="0.1" min="1" max="3" data-eo="repScale" value="' + (o.repScale || 1.7) + '"></label>' : '') + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') && state.snip ? ck('snip', 'ส่งออกเฉพาะ<b>พื้นที่ที่ตัดไว้</b> (' + state.snip.w + '×' + state.snip.h + ') — เลือก “ตามขนาดผัง” ถ้าอยากได้ภาพขนาดเท่าพื้นที่นั้นพอดี') : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') ? (expCropIds.length ? ck('crop', 'ตัดเอาเฉพาะส่วนที่เลือก (' + expCropIds.length + ' คน) — ส่วนอื่นของผังไม่ติดมา') : '<div class="note" style="margin:4px 0">อยากตัดเฉพาะบางส่วน: ปิดหน้าต่างนี้ → กด “เลือกหลายคน” แล้วลากกรอบรอบคนที่ต้องการ (หรือ Shift+คลิก) → เปิดส่งออกอีกครั้ง</div>') : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
+  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + opt('rep', 'แบบเล่มรายงาน: เต็มที่ 1–2 หน้า (ข้อความใหญ่ พับแถวให้เต็มหน้า)', o.mode) + '</select></label>' + (o.mode === 'rep' ? '<label>จำนวนหน้า<select data-eo="repPages">' + opt('1', '1 หน้า', String(o.repPages || 2)) + opt('2', '2 หน้า', String(o.repPages || 2)) + '</select></label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repLean\"' + (o.repLean ? ' checked' : '') + '> ซ่อนบรรทัดรอง (การศึกษา/อาชีพ/บทบาท/ย้ายถิ่น/พฤติกรรม/หมายเหตุ) — เหมาะกับภาพรวม</label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repFit\"' + (o.repFit === false ? '' : ' checked') + '> ย่อเฉพาะป้ายที่ทับกันอัตโนมัติ</label><label>จำนวนแถวที่พับ<select data-eo=\"repRows\">' + opt('0', 'อัตโนมัติ (ให้ตัวใหญ่สุด)', String(o.repRows || 0)) + opt('1', '1 แถว (ไม่พับ)', String(o.repRows || 0)) + opt('2', '2 ชั้น', String(o.repRows || 0)) + opt('3', '3 ชั้น', String(o.repRows || 0)) + '</select></label><label>ขยายข้อความเทียบกับสัญลักษณ์ (เท่า)<input type="number" step="0.1" min="1" max="3" data-eo="repScale" value="' + (o.repScale || 1.7) + '"></label>' : '') + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') && state.snip ? ck('snip', 'ส่งออกเฉพาะ<b>พื้นที่ที่ตัดไว้</b> (' + state.snip.w + '×' + state.snip.h + ') — เลือก “ตามขนาดผัง” ถ้าอยากได้ภาพขนาดเท่าพื้นที่นั้นพอดี') : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') ? (expCropIds.length ? ck('crop', 'ตัดเอาเฉพาะส่วนที่เลือก (' + expCropIds.length + ' คน) — ส่วนอื่นของผังไม่ติดมา') : '<div class="note" style="margin:4px 0">อยากตัดเฉพาะบางส่วน: ปิดหน้าต่างนี้ → กด “เลือกหลายคน” แล้วลากกรอบรอบคนที่ต้องการ (หรือ Shift+คลิก) → เปิดส่งออกอีกครั้ง</div>') : '') + (o.mode === 'single' ? ck('rotate', 'หมุนผัง 90° (ทวนเข็มนาฬิกา — วางผังกว้างบนหน้ากระดาษแนวตั้งให้เต็มหน้า แบบเล่มเขต 7/9)') : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
     (o.alias && r.missingAlias ? '<div class="warnbox">มี ' + r.missingAlias + ' คนที่ยังไม่ตั้งตัวย่อ — ระบบใช้ตัวย่อที่สร้างอัตโนมัติจากชื่อให้ (ตรวจดูก่อนส่ง)</div>' : '') +
     (!o.alias ? '<div class="warnbox">กำลังจะแสดง<b>ชื่อจริง</b>ของชาวบ้านในรูป — ตรวจว่ารายงานอนุญาตหรือไม่</div>' : '') +
     '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).filter(function (k) { return !book || k !== 'auto'; }).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
