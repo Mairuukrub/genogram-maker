@@ -22,7 +22,7 @@ function fontCss() { return (window.GM_FONTS || []).map(function (f) { return "@
 /* ================= state ================= */
 var project = { families: [] }, fam = null, state = null;
 var undoMap = {}, redoMap = {}, undoS = [], redoS = [];
-var sel = null, msel = {}, mode = null, selMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
+var sel = null, msel = {}, mode = null, selMode = false, brkMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
 var svg, panel, ctr = 0;
 
 function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [] }; }
@@ -162,8 +162,19 @@ function zoomAt(f, cx, cy) {
 }
 function showZoom() { var z = $('#zl'); if (z) z.textContent = Math.round((svg.clientWidth || 1000) / view.w * 100) + '%'; }
 function pt(e) { var p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; var q = p.matrixTransform(svg.getScreenCTM().inverse()); return { x: q.x, y: q.y }; }
+function brkCount() { return state.persons.filter(function (q) { return q.brk; }).length; }
+function overlayBreaks() {
+  var bs = state.persons.filter(function (q) { return q.brk; }); if (!bs.length) return;
+  var boxes = GE.personBoxes(state, ctxFor(fam, {})), ys = state.persons.map(function (q) { return q.y; }), y0 = Math.min.apply(null, ys) - 70, y1 = Math.max.apply(null, ys) + 110, h = '';
+  bs.forEach(function (q) {
+    var bx = boxes.filter(function (b) { return b.id === q.id; })[0]; if (!bx) return; var x = bx.x0 - 6;
+    h += '<line x1="' + x + '" y1="' + y0 + '" x2="' + x + '" y2="' + y1 + '" stroke="#e8590c" stroke-width="2.5" stroke-dasharray="10 7" pointer-events="none"/><text x="' + (x + 6) + '" y="' + (y0 + 4) + '" font-size="16" font-weight="700" fill="#e8590c" pointer-events="none">▶ แถวใหม่</text>';
+  });
+  svg.insertAdjacentHTML('beforeend', h);
+}
 function draw() {
   svg.innerHTML = GE.inner(state, ctxFor(fam, { sel: sel, msel: msel, mode: mode }));
+  overlayBreaks();
   var e = $('#empty'); if (e) e.style.display = state.persons.length ? 'none' : 'flex';
 }
 function select(s) { sel = s; if (s) msel = {}; renderPanel(); draw(); }
@@ -387,6 +398,7 @@ function renderPanel() {
       '<button data-act="parents"' + (p.from ? ' disabled' : '') + '>+ พ่อแม่</button><button data-act="sib" data-v="M">+ พี่น้องชาย</button><button data-act="sib" data-v="F">+ พี่น้องหญิง</button></div></div>' +
       '<div class="sec"><div class="st">อยู่บ้านเดียวกัน</div><div class="btns"><button data-act="homefrom">เริ่มวงจากคนนี้ (แล้วคลิกคนอื่นเพิ่ม)</button></div></div>' +
       '<div class="sec"><div class="st">เชื่อมกับคนอื่น</div><select id="linktype" style="width:100%;max-width:none">' + linkOptions() + '</select><div class="btns"><button class="pri" data-act="link">เลือกคนที่จะเชื่อม</button>' + (p.tw ? '<button data-act="untwin">ยกเลิกแฝด</button>' : '') + '</div></div>' +
+      '<div class="sec"><div class="st">ตัดแถวสำหรับส่งออก (แบบเล่มรายงาน)</div><p class="mut">ตั้งให้คนนี้เป็นคนแรกของแถวใหม่ — ตอนส่งออกจะตัดที่ด้านซ้ายของคนนี้ (เส้นประสีส้มบนผัง)</p><div class="btns"><button data-act="brk">' + (p.brk ? 'ยกเลิกจุดตัดที่คนนี้' : 'เริ่มแถวใหม่ที่คนนี้') + '</button>' + (brkCount() ? '<button data-act="brkclear">ล้างจุดตัดทั้งหมด (' + brkCount() + ')</button>' : '') + '</div></div>' +
       '<div class="sec"><button class="dng" data-act="del">ลบคนนี้</button></div>';
   } else if (sel.k === 't') {
     var tx = s;
@@ -501,6 +513,8 @@ function onAct(e) {
   else if (act === 'swap' && s) { pushSnap(); var tmp = s.a; s.a = s.b; s.b = tmp; }
   else if (act === 'del') { doDelete(); return; }
   else if (act === 'mdel') { doDeleteMulti(); return; }
+  else if (act === 'brk' && s && sel && sel.k === 'p') { pushSnap(); if (s.brk) delete s.brk; else s.brk = 1; }
+  else if (act === 'brkclear') { pushSnap(); state.persons.forEach(function (q) { delete q.brk; }); }
   else if (act === 'mclear') { msel = {}; }
   else if (act === 'mcolor') { pushSnap(); Object.keys(msel).forEach(function (id) { var q = ixOf()[id]; if (q) q.c = +v; }); }
   else if (act === 'malign') {
@@ -545,6 +559,10 @@ function bindCanvas() {
     }
     else if (tg && tg.getAttribute('data-pid')) {
       var pid = tg.getAttribute('data-pid');
+      if (brkMode) { /* click a person = start a new export row at this person (click again to undo) */
+        var bqq = ixOf()[pid]; if (bqq) { pushSnap(); if (bqq.brk) delete bqq.brk; else bqq.brk = 1; toast(bqq.brk ? 'ตั้งจุดตัดแถวแล้ว (' + brkCount() + ' จุด)' : 'ยกเลิกจุดตัดแล้ว (' + brkCount() + ' จุด)'); renderPanel(); draw(); save(); }
+        return;
+      }
       if (e.shiftKey || selMode) {
         if (sel && sel.k === 'p' && sel.id !== pid) { msel[sel.id] = 1; } sel = null;
         if (msel[pid]) delete msel[pid]; else msel[pid] = 1; renderPanel(); draw(); return;
@@ -701,9 +719,20 @@ function measure(inner) {
   var bb; try { bb = t.firstChild.getBBox(); } catch (e) { bb = { x: 0, y: 0, width: 800, height: 500 }; }
   t.remove(); return { x: bb.x, y: bb.y, w: bb.width, h: bb.height };
 }
+/* people selected on the chart when the export dialog was opened → crop box (symbols + their labels) */
+var expCropIds = [];
+function cropBBox(o, ctx) {
+  if (!o.crop || !expCropIds.length) return null;
+  var set = {}; expCropIds.forEach(function (i) { set[i] = 1; });
+  var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, PADC = 26;
+  GE.personBoxes(state, ctx).forEach(function (b) { if (!set[b.id]) return; x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1); });
+  if (x0 > x1) return null;
+  return { x: x0 - PADC, y: y0 - PADC, w: x1 - x0 + 2 * PADC, h: y1 - y0 + 2 * PADC };
+}
+function clipTo(cb, content, id) { return cb ? '<defs><clipPath id="' + id + '"><rect x="' + cb.x + '" y="' + cb.y + '" width="' + cb.w + '" height="' + cb.h + '"/></clipPath></defs><g clip-path="url(#' + id + ')">' + content + '</g>' : content; }
 function buildExport(o) {
   var ctx = ctxFor(fam, { alias: o.alias, gen: o.gen, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, pre: 'x_', nosel: true });
-  var content = GE.inner(state, ctx), bb = measure(content);
+  var content = GE.inner(state, ctx), bb = measure(content), cb = cropBBox(o, ctx); if (cb) bb = cb;
   var lmode = o.legendMode || (o.legend === false ? 'none' : 'used'), padv = 26, items = lmode === 'none' ? [] : GE.legendItems(state, ctx, lmode), cw = Math.max(bb.w, 560), parts = '', y = padv;
   var title = o.title && fam.title ? fam.title : '', sub = [];
   if (o.title && o.subtitle) { if (fam.house) sub.push('บ้านเลขที่ ' + fam.house); if (fam.place) sub.push(fam.place); if (fam.date) sub.push('ข้อมูล ณ วันที่ ' + thaiDate(fam.date)); }
@@ -711,7 +740,7 @@ function buildExport(o) {
   if (sub.length) { y += 18; parts += '<text x="' + (cw / 2 + padv) + '" y="' + y + '" text-anchor="middle" font-size="14" fill="#4a5d80">' + esc(sub.join('   ·   ')) + '</text>'; y += 6; }
   if (title || sub.length) y += 14;
   var ox = padv + (cw - bb.w) / 2 - bb.x, oy = y - bb.y;
-  parts += '<g transform="translate(' + ox.toFixed(1) + ',' + oy.toFixed(1) + ')">' + content + '</g>'; y += bb.h + 22;
+  parts += '<g transform="translate(' + ox.toFixed(1) + ',' + oy.toFixed(1) + ')">' + clipTo(cb, content, 'x_crop') + '</g>'; y += bb.h + 22;
   if (items.length) {
     parts += '<line x1="' + padv + '" y1="' + y + '" x2="' + (padv + cw) + '" y2="' + y + '" stroke="#d6d0bd" stroke-width="1"/>'; y += 22;
     parts += '<text x="' + padv + '" y="' + y + '" font-size="14" font-weight="600" fill="#1f2a44">' + (lmode === 'standard' ? GE.LEGEND_TITLE : 'สัญลักษณ์') + '</text>'; y += 8;
@@ -862,12 +891,151 @@ function buildBook(o) {
   var miss = state.persons.filter(function (p) { return p.name && !(o.unk !== false && GE.isUnk(p.name)) && !String(p.alias || '').trim(); }).length;
   return { book: true, one: one, ovPt: ovPt, pages: pages, P: P, N: N, total: total, ptEff: ptEff, ptWant: minPt, shrunk: ptEff < minPt * 0.95, missingAlias: miss, cuts: cuts, tiles: tiles, straddle: cuts.slice(1, -1).map(function (c) { return boxes.filter(function (b) { return b.x0 < c && b.x1 > c; }).length; }) };
 }
+
+/* ---- "report style": whole chart on 1 or 2 landscape/portrait pages, text enlarged relative to symbols, rows folded to fill each page ---- */
+function buildReport(o) {
+  var P = (PAPERS[o.paper] && PAPERS[o.paper].w) ? PAPERS[o.paper] : PAPERS.a4l, m = Math.max(5, +o.margin || 12), NP = (+o.repPages === 1) ? 1 : 2, TS = Math.max(1, Math.min(3, +o.repScale || 1.7));
+  var saved = state, st2 = clone(state), cropped = false;
+  if (o.crop && expCropIds.length) { /* only the selected people (e.g. one family line): drop everyone else so the page is spent on them */
+    var keep = {}, kun = {}; expCropIds.forEach(function (i) { keep[i] = 1; });
+    st2.persons = st2.persons.filter(function (p) { return keep[p.id]; });
+    st2.unions = st2.unions.filter(function (u) { var ok = u.a && keep[u.a] && (!u.b || keep[u.b]); if (ok) kun[u.id] = 1; return ok; });
+    st2.persons.forEach(function (p) { if (p.from && !kun[p.from]) delete p.from; });
+    st2.rels = st2.rels.filter(function (r) { return keep[r.a] && keep[r.b]; });
+    st2.homes.forEach(function (h) { h.ids = h.ids.filter(function (i) { return keep[i]; }); }); st2.homes = st2.homes.filter(function (h) { return h.ids.length; });
+    cropped = true;
+  }
+  st2.persons.forEach(function (p) { p.ls = (p.ls || 1) * TS; if (o.repLean) { delete p.edu; delete p.occ; delete p.role; delete p.mig; delete p.risk; delete p.note; } });
+  var base = { alias: o.alias, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, nosel: true };
+  var out;
+  state = st2;
+  try {
+    var ctx0 = ctxFor(fam, Object.assign({ gen: false, pre: 'x_' }, base));
+    var al = GE.autoLabels(st2, ctx0);
+    st2.persons.forEach(function (p) { if (!p.lo && al[p.id] !== undefined) { if (al[p.id]) p.lp = al[p.id]; else delete p.lp; } });
+    /* count label/symbol boxes that overlap, optionally shrink only the crowded labels */
+    function overlapPairs() {
+      var bx = GE.personBoxes(st2, ctx0), out = [];
+      for (var i = 0; i < bx.length; i++) for (var j = i + 1; j < bx.length; j++) {
+        var a = bx[i], b = bx[j]; if (a.id === b.id) continue;
+        var w = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0), h = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+        if (w > 4 && h > 4) out.push([a.id, b.id, w * h]);
+      }
+      return out;
+    }
+    var ovBefore = overlapPairs().length, ovAfter = ovBefore, minLs = TS, mp0 = ixOf();
+    if (o.repFit !== false) {
+      for (var itx = 0; itx < 10 && ovAfter; itx++) {
+        var prs = overlapPairs(), hit = {};
+        prs.forEach(function (pr) { var a = mp0[pr[0]], b = mp0[pr[1]]; if (!a || !b) return; var v = (a.ls || 1) >= (b.ls || 1) ? a : b; hit[v.id] = v; });
+        Object.keys(hit).forEach(function (id) { var v = hit[id]; if (!v.lo) v.ls = Math.max(1.05, (v.ls || 1) * 0.9); });
+        if (itx % 2 === 1) { var al2 = GE.autoLabels(st2, ctx0); st2.persons.forEach(function (q) { if (!q.lo && al2[q.id] !== undefined) { if (al2[q.id]) q.lp = al2[q.id]; else delete q.lp; } }); }
+        ovAfter = overlapPairs().length;
+      }
+      st2.persons.forEach(function (q) { minLs = Math.min(minLs, q.ls || 1); });
+    }
+    var ctxO = ctxFor(fam, Object.assign({ gen: o.gen !== false && !cropped, pre: 'x_' }, base));
+    var cO = GE.inner(st2, ctxO), bo = measure(cO), PADU = 24;
+    bo = { x: bo.x - PADU, y: bo.y - PADU, w: bo.w + 2 * PADU, h: bo.h + 2 * PADU };
+    var boxes = GE.personBoxes(st2, ctxO), segs = GE.lineSegs(st2), mpx = ixOf(), pairs = st2.unions.filter(function (u) { return u.a && u.b; }).map(function (u) { return [u.a, u.b]; });
+    var HDR = 11, FTR = 6, GAPS = 4, title = fam.title || 'ผังเครือญาติ', Wo = P.w - 2 * m;
+    var items = (o.legendMode === 'none') ? [] : GE.legendItems(st2, ctxO, o.legendMode || 'used');
+    var RH = 46;
+    function legLay(sl) {
+      var capL = Wo / sl, lx = 0, ly = 0, rp = [];
+      items.forEach(function (it2) { var w2 = 66 + 8 + Math.min(300, it2.label.length * 7.4) + 22; if (lx > 0 && lx + w2 > capL) { lx = 0; ly += RH; } rp.push([lx, ly, it2]); lx += w2; });
+      return { rows: rp, h: items.length ? (ly + RH) * sl + 6 : 0 };
+    }
+    var slg = 0.12 * (P.w / 297), LL = legLay(slg), rowsPos = LL.rows, legH = LL.h;
+    function tileWin(c0, c1) {
+      var y0 = 1e9, y1 = -1e9;
+      boxes.forEach(function (b) { if (b.x1 > c0 && b.x0 < c1) { y0 = Math.min(y0, b.y0); y1 = Math.max(y1, b.y1); } });
+      segs.forEach(function (g) { if (Math.max(g[0], g[2]) > c0 && Math.min(g[0], g[2]) < c1) { y0 = Math.min(y0, g[1], g[3]); y1 = Math.max(y1, g[1], g[3]); } });
+      if (y0 > y1) { y0 = bo.y; y1 = bo.y + bo.h; }
+      return { y0: y0 - PADU, y1: y1 + PADU };
+    }
+    function cleanCut(ideal, span) {
+      var best = ideal, bs = -1e18;
+      for (var c = ideal - 0.3 * span; c <= ideal + 0.3 * span; c += 3) {
+        var sc = -Math.abs(c - ideal) * 0.6, i;
+        for (i = 0; i < boxes.length; i++) if (boxes[i].x0 < c && boxes[i].x1 > c) sc -= 500;
+        for (i = 0; i < pairs.length; i++) { var pa = mpx[pairs[i][0]], pb = mpx[pairs[i][1]]; if (pa && pb && Math.min(pa.x, pb.x) < c && Math.max(pa.x, pb.x) > c) sc -= 200; }
+        if (sc > bs) { bs = sc; best = c; }
+      }
+      return best;
+    }
+    /* best fold of the column range [a,b] into k rows for a page of usable height Hp: returns scale + rows */
+    function foldBest(a, b, Hp) {
+      var bestS = 0, rows = null;
+      var RR = Math.max(0, Math.min(8, +o.repRows || 0));
+      for (var k = RR || 1; k <= (RR || 8); k++) {
+        var cs = [a], span = (b - a) / k, j;
+        for (j = 1; j < k; j++) cs.push(cleanCut(a + span * j, span));
+        cs.push(b);
+        var wins = [], wmax = 0, sumH = 0;
+        for (j = 0; j < k; j++) { var w = tileWin(cs[j], cs[j + 1]); wins.push(w); wmax = Math.max(wmax, cs[j + 1] - cs[j]); sumH += w.y1 - w.y0; }
+        var sK = Math.min(Wo / wmax, (Hp - GAPS * (k - 1)) / sumH);
+        if (sK > bestS) { bestS = sK; rows = { cuts: cs, wins: wins }; }
+      }
+      if (!rows) { var w0 = tileWin(a, b); rows = { cuts: [a, b], wins: [w0] }; bestS = Math.max(1e-4, Math.min(Wo / (b - a), Math.max(10, Hp) / (w0.y1 - w0.y0))); }
+      return { s: bestS, rows: rows };
+    }
+    function foldFixed(cs, Hp) {
+      var wins = [], wmax = 0, sumH = 0;
+      for (var j = 0; j + 1 < cs.length; j++) { var w = tileWin(cs[j], cs[j + 1]); wins.push(w); wmax = Math.max(wmax, cs[j + 1] - cs[j]); sumH += w.y1 - w.y0; }
+      return { s: Math.max(1e-4, Math.min(Wo / wmax, (Hp - GAPS * (cs.length - 2)) / sumH)), rows: { cuts: cs, wins: wins } };
+    }
+    var manualCuts = [];
+    st2.persons.forEach(function (q) { if (!q.brk) return; var bx = boxes.filter(function (b) { return b.id === q.id; })[0]; if (bx) manualCuts.push(bx.x0 - 6); });
+    manualCuts = manualCuts.sort(function (a, b) { return a - b; }).filter(function (c, i, arr) { return c > bo.x + 20 && c < bo.x + bo.w - 20 && (!i || c - arr[i - 1] > 30); });
+    var Hfull = P.h - 2 * m - HDR - FTR - 2, plan = null;
+    if (manualCuts.length) { /* the user placed the row breaks: use exactly those */
+      var allC = [bo.x].concat(manualCuts, [bo.x + bo.w]);
+      if (NP === 1) { var fm = foldFixed(allC, Hfull - legH); plan = { s: fm.s, parts: [fm.rows] }; }
+      else { var mh = Math.ceil((allC.length - 1) / 2), fa2 = foldFixed(allC.slice(0, mh + 1), Hfull), fb2 = foldFixed(allC.slice(mh), Hfull - legH); plan = { s: Math.min(fa2.s, fb2.s), parts: [fa2.rows, fb2.rows] }; }
+    } else if (NP === 1) { var f1 = foldBest(bo.x, bo.x + bo.w, Hfull - legH); plan = { s: f1.s, parts: [f1.rows] }; }
+    else {
+      for (var fr = 0.34; fr <= 0.66; fr += 0.02) {
+        var cut = cleanCut(bo.x + bo.w * fr, bo.w * 0.1), fa = foldBest(bo.x, cut, Hfull), fb = foldBest(cut, bo.x + bo.w, Hfull - legH), sc2 = Math.min(fa.s, fb.s);
+        if (!plan || sc2 > plan.s) plan = { s: sc2, parts: [fa.rows, fb.rows] };
+      }
+    }
+    var so = plan.s, pages = [], font = GE.FONT.replace(/"/g, "'");
+    if (items.length) { /* use the empty space under the last page's chart for a bigger legend */
+      var lastRows = plan.parts[plan.parts.length - 1], usedH = 0; lastRows.wins.forEach(function (w) { usedH += (w.y1 - w.y0) * so; }); usedH += GAPS * (lastRows.wins.length - 1);
+      var freeH = Hfull - usedH - 4, best = LL;
+      var slg0 = slg; for (var kk = 1.1; kk <= 3; kk += 0.1) { var cand = legLay(slg0 * kk); if (cand.h <= freeH) { best = cand; slg = slg0 * kk; } else break; }
+      rowsPos = best.rows; legH = best.h;
+    }
+    function wrapSvg(inner, wA, hA, withFont) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + P.w + ' ' + P.h + '" width="' + wA + '" height="' + hA + '" font-family="' + font + '">' + (withFont ? '<style>' + fontCss() + '</style>' : '') + '<rect width="' + P.w + '" height="' + P.h + '" fill="#fff"/>' + inner + '</svg>'; }
+    plan.parts.forEach(function (rows, pi) {
+      var inner = '', yoff = 0, nr = rows.wins.length;
+      if (o.title !== false) inner += '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + (pi > 0 ? ' (ต่อ)' : '') + '</text>';
+      for (var k = 0; k < nr; k++) {
+        var a0 = rows.cuts[k], a1 = rows.cuts[k + 1], wn = rows.wins[k], hh = (wn.y1 - wn.y0) * so, tx = m + (Wo - (a1 - a0) * so) / 2 - a0 * so, ty = m + HDR + yoff - wn.y0 * so, cid = 'rpc' + pi + '_' + k;
+        inner += '<defs><clipPath id="' + cid + '"><rect x="' + a0 + '" y="' + wn.y0 + '" width="' + (a1 - a0) + '" height="' + (wn.y1 - wn.y0) + '"/></clipPath></defs><g transform="translate(' + tx.toFixed(3) + ',' + ty.toFixed(3) + ') scale(' + so.toFixed(5) + ')"><g clip-path="url(#' + cid + ')">' + cO + '</g></g>';
+        if (nr > 1 && k < nr - 1) inner += '<text x="' + (P.w - m) + '" y="' + (m + HDR + yoff + hh + 2.2) + '" text-anchor="end" font-size="2.2" fill="#9aa7c0">ต่อแถวถัดไป ▼</text>';
+        yoff += hh + GAPS;
+      }
+      if (pi === plan.parts.length - 1 && items.length) {
+        var gy = P.h - m - FTR - legH + 3;
+        inner += '<line x1="' + m + '" y1="' + (gy - 2) + '" x2="' + (P.w - m) + '" y2="' + (gy - 2) + '" stroke="#d6d0bd" stroke-width="0.25"/>';
+        rowsPos.forEach(function (r) { inner += '<g transform="translate(' + (m + r[0] * slg).toFixed(2) + ',' + (gy + r[1] * slg).toFixed(2) + ') scale(' + slg.toFixed(5) + ')">' + r[2].svg + '<text x="74" y="27" font-size="12.5" fill="#1f2a44">' + esc(r[2].label) + '</text></g>'; });
+      }
+      pages.push({ kind: 'report', build: function (w, h, f) { return wrapSvg(inner, w, h, f); } });
+    });
+    var nameMin = 15 * minLs * so * 72 / 25.4, noteMin = 12.5 * minLs * so * 72 / 25.4;
+    var miss = st2.persons.filter(function (p) { return p.name && !(o.unk !== false && GE.isUnk(p.name)) && !String(p.alias || '').trim(); }).length;
+    out = { book: true, rep: true, pages: pages, P: P, N: pages.length, total: pages.length, nameMin: nameMin, noteMin: noteMin, so: so, missingAlias: miss, rowsPerPage: plan.parts.map(function (r) { return r.wins.length; }), manual: manualCuts.length, ovBefore: ovBefore, ovAfter: ovAfter, nameNominal: 15 * TS * so * 72 / 25.4 };
+  } finally { state = saved; }
+  return out;
+}
 /* ---- one long row on an extra-wide custom page (PDF only: zoom or draw over it on a tablet) ---- */
 function buildLong(o) {
   var m = Math.max(5, +o.margin || 12), pt = Math.max(3, +o.longPt || 6), s = pt * 25.4 / 72 / 12.5;
   var base = { alias: o.alias, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, nosel: true };
   var ctxO = ctxFor(fam, Object.assign({ gen: o.gen !== false, pre: 'x_' }, base));
-  var cO = GE.inner(state, ctxO), bo = measure(cO), PAD = 20, title = fam.title || 'ผังเครือญาติ';
+  var cO = GE.inner(state, ctxO), bo = measure(cO), PAD = 20, title = fam.title || 'ผังเครือญาติ', cbL = cropBBox(o, ctxO); if (cbL) bo = cbL;
   var HDR = 11, FTR = 7;
   var items = (o.legendMode === 'none') ? [] : GE.legendItems(state, ctxO, o.legendMode || 'used');
   var capL = Math.min(bo.w, 1400), lx = 0, ly = 0, RH = 46, rowsPos = [];
@@ -877,7 +1045,7 @@ function buildLong(o) {
   var P = { w: W, h: H, n: 'ยาวพิเศษ' }, font = GE.FONT.replace(/"/g, "'");
   var sub = [fam.house ? 'บ้านเลขที่ ' + fam.house : '', fam.place || '', fam.date ? 'ข้อมูล ณ วันที่ ' + thaiDate(fam.date) : ''].filter(Boolean).join('   ·   ');
   var inner = '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>' + (sub ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') +
-    '<g transform="translate(' + (m + PAD * s - bo.x * s).toFixed(3) + ',' + (m + HDR - bo.y * s).toFixed(3) + ') scale(' + s.toFixed(5) + ')">' + cO + '</g>';
+    '<g transform="translate(' + (m + PAD * s - bo.x * s).toFixed(3) + ',' + (m + HDR - bo.y * s).toFixed(3) + ') scale(' + s.toFixed(5) + ')">' + clipTo(cbL, cO, 'x_cropl') + '</g>';
   if (items.length) {
     var gy = m + HDR + bo.h * s + 6;
     rowsPos.forEach(function (r) { inner += '<g transform="translate(' + (m + r[0] * s).toFixed(2) + ',' + (gy + r[1] * s).toFixed(2) + ') scale(' + s.toFixed(5) + ')">' + r[2].svg + '<text x="74" y="27" font-size="12.5" fill="#1f2a44">' + esc(r[2].label) + '</text></g>'; });
@@ -989,6 +1157,16 @@ function canvaPage(svgStr, wmm, hmm) {
       var s = el.textContent.replace(/\s+$/, ''); if (!s.trim()) return;
       var cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return;
       var r = el.getBoundingClientRect(); if (!(r.width > 0)) return;
+      /* skip text that a clipPath hides (folded-row export keeps the whole chart in every row, clipped) */
+      var cg = el.closest('[clip-path]');
+      if (cg) {
+        var cm = /url\(#([^)]+)\)/.exec(cg.getAttribute('clip-path') || ''), cr = cm && svg.querySelector('[id="' + cm[1] + '"] rect'), CM = cg.getScreenCTM && cg.getScreenCTM();
+        if (cr && CM) {
+          var cx0 = +cr.getAttribute('x'), cy0 = +cr.getAttribute('y'), cw = +cr.getAttribute('width'), ch = +cr.getAttribute('height');
+          var L0 = CM.a * cx0 + CM.e, T0 = CM.d * cy0 + CM.f, R0 = CM.a * (cx0 + cw) + CM.e, B0 = CM.d * (cy0 + ch) + CM.f, tx = (r.left + r.right) / 2, ty = (r.top + r.bottom) / 2;
+          if (tx < L0 || tx > R0 || ty < T0 || ty > B0) return;
+        }
+      }
       var m = el.getScreenCTM(), ppu = m ? Math.sqrt(m.a * m.a + m.b * m.b) : 1, fpx = parseFloat(cs.fontSize) * ppu;
       texts.push({ s: s, x: (r.left - sr.left) / PXMM, y: (r.top - sr.top) / PXMM, w: r.width / PXMM, h: r.height / PXMM, pt: fpx / PXMM * 72 / 25.4, col: hex(cs.fill), b: parseInt(cs.fontWeight, 10) >= 600, al: cs.textAnchor === 'middle' ? 'ctr' : cs.textAnchor === 'end' ? 'r' : 'l' });
     });
@@ -1012,7 +1190,7 @@ function canvaPage(svgStr, wmm, hmm) {
 }
 function canvaMake(o) {
   var specs = [], wmm, hmm;
-  if (o.mode === 'book' || o.mode === 'one') { var r = buildBook(o); wmm = r.P.w; hmm = r.P.h; r.pages.forEach(function (pg, i) { specs.push(pg.build(wmm + 'mm', hmm + 'mm', i === 0)); }); }
+  if (o.mode === 'book' || o.mode === 'one' || o.mode === 'rep') { var r = o.mode === 'rep' ? buildReport(o) : buildBook(o); wmm = r.P.w; hmm = r.P.h; r.pages.forEach(function (pg, i) { specs.push(pg.build(wmm + 'mm', hmm + 'mm', i === 0)); }); }
   else { var q = buildExport(o), s = Math.min(1400 / q.W, 1400 / q.H, 0.3); wmm = +(q.W * s).toFixed(2); hmm = +(q.H * s).toFixed(2); specs.push(q.build(wmm + 'mm', hmm + 'mm')); }
   var done = [], chain = Promise.resolve();
   specs.forEach(function (sv) { chain = chain.then(function () { return canvaPage(sv, wmm, hmm); }).then(function (p) { done.push(p); }); });
@@ -1029,9 +1207,9 @@ function doCanva(o) {
 }
 function fname(ext) { return (fam.title || 'genogram').replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, '_').slice(0, 60) + '.' + ext; }
 function renderExportDialog() {
-  var o = expOpts(), book = o.mode === 'book' || o.mode === 'one' || o.mode === 'long', r = o.mode === 'long' ? buildLong(o) : (book ? buildBook(o) : buildExport(o)), box = $('#expOpts');
+  var o = expOpts(), book = o.mode === 'book' || o.mode === 'one' || o.mode === 'long' || o.mode === 'rep', r = o.mode === 'long' ? buildLong(o) : (o.mode === 'rep' ? buildReport(o) : (book ? buildBook(o) : buildExport(o))), box = $('#expOpts');
   function ck(k, t) { return '<label class="ck"><input type="checkbox" data-eo="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + t + '</label>'; }
-  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + '</select></label>' + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
+  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + opt('rep', 'แบบเล่มรายงาน: เต็มที่ 1–2 หน้า (ข้อความใหญ่ พับแถวให้เต็มหน้า)', o.mode) + '</select></label>' + (o.mode === 'rep' ? '<label>จำนวนหน้า<select data-eo="repPages">' + opt('1', '1 หน้า', String(o.repPages || 2)) + opt('2', '2 หน้า', String(o.repPages || 2)) + '</select></label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repLean\"' + (o.repLean ? ' checked' : '') + '> ซ่อนบรรทัดรอง (การศึกษา/อาชีพ/บทบาท/ย้ายถิ่น/พฤติกรรม/หมายเหตุ) — เหมาะกับภาพรวม</label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repFit\"' + (o.repFit === false ? '' : ' checked') + '> ย่อเฉพาะป้ายที่ทับกันอัตโนมัติ</label><label>จำนวนแถวที่พับ<select data-eo=\"repRows\">' + opt('0', 'อัตโนมัติ (ให้ตัวใหญ่สุด)', String(o.repRows || 0)) + opt('1', '1 แถว (ไม่พับ)', String(o.repRows || 0)) + opt('2', '2 ชั้น', String(o.repRows || 0)) + opt('3', '3 ชั้น', String(o.repRows || 0)) + '</select></label><label>ขยายข้อความเทียบกับสัญลักษณ์ (เท่า)<input type="number" step="0.1" min="1" max="3" data-eo="repScale" value="' + (o.repScale || 1.7) + '"></label>' : '') + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') ? (expCropIds.length ? ck('crop', 'ตัดเอาเฉพาะส่วนที่เลือก (' + expCropIds.length + ' คน) — ส่วนอื่นของผังไม่ติดมา') : '<div class="note" style="margin:4px 0">อยากตัดเฉพาะบางส่วน: ปิดหน้าต่างนี้ → กด “เลือกหลายคน” แล้วลากกรอบรอบคนที่ต้องการ (หรือ Shift+คลิก) → เปิดส่งออกอีกครั้ง</div>') : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
     (o.alias && r.missingAlias ? '<div class="warnbox">มี ' + r.missingAlias + ' คนที่ยังไม่ตั้งตัวย่อ — ระบบใช้ตัวย่อที่สร้างอัตโนมัติจากชื่อให้ (ตรวจดูก่อนส่ง)</div>' : '') +
     (!o.alias ? '<div class="warnbox">กำลังจะแสดง<b>ชื่อจริง</b>ของชาวบ้านในรูป — ตรวจว่ารายงานอนุญาตหรือไม่</div>' : '') +
     '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).filter(function (k) { return !book || k !== 'auto'; }).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
@@ -1040,6 +1218,7 @@ function renderExportDialog() {
     '<p class="note" style="margin-top:8px">PDF เป็นเวกเตอร์ (คมที่สุด) — ในหน้าต่างพิมพ์ให้เลือกปลายทาง “บันทึกเป็น PDF” และปิด “หัวกระดาษและท้ายกระดาษ”<br>PNG ความละเอียด 300 dpi ตามขนาดกระดาษ ใช้แทรกใน Word ได้ · SVG ไม่ควรใช้ใน Word<br><b>สำหรับ Canva:</b> ได้ไฟล์ .pptx ที่ข้อความทุกบรรทัดเป็นกล่องข้อความแยก (ย้าย/แก้/เปลี่ยนสีได้) วางบนภาพสัญลักษณ์และเส้น · ใช้ได้กับ “หน้าเดียว” และ “ชุดลงเล่ม”</p>';
   if (book) {
     $('#expPv').innerHTML = r.pages.map(function (pg, i) { return '<div style="margin-bottom:8px;border:1px solid #cfd6e4;background:#fff">' + pg.build('100%', 'auto', i === 0) + '</div>'; }).join('');
+    if (r.rep) { $('#expInfo').innerHTML = r.total + ' หน้า (แถวพับ ' + r.rowsPerPage.join(' + ') + ')' + (r.manual ? ' · ตัดตามจุดที่ตั้งไว้ ' + r.manual + ' จุด' : '') + ' · ข้อความทับกัน ' + r.ovBefore + ' → ' + r.ovAfter + ' จุด · ชื่อ (ส่วนใหญ่) ≈ ' + r.nameNominal.toFixed(1) + ' pt, เล็กสุด <b>' + r.nameMin.toFixed(1) + ' pt</b> · ข้อความอื่นเล็กสุด ≈ <b>' + r.noteMin.toFixed(1) + ' pt</b> บนกระดาษ' + (r.nameMin < 4 ? '<div class="warnbox">ตัวอักษรยังเล็ก (เขตอื่นอยู่ราว 5–6 pt สำหรับชื่อ) — ลองซ่อนหมายเหตุ / ลดจำนวนบรรทัด / เปลี่ยนเป็น 2 หน้า</div>' : '<div class="okbox">ใกล้เคียงรายงานเขตอื่น</div>'); return r; }
     if (r.long) { $('#expInfo').innerHTML = 'หน้ากระดาษยาวพิเศษ <b>' + Math.round(r.widthMm) + ' × ' + Math.round(r.heightMm) + ' มม.</b> (ยาว ≈ ' + (r.widthMm / 1000).toFixed(2) + ' ม.) · ตัวอักษรเล็กสุด ' + r.ptEff + ' pt' + (r.tooWide ? '<div class="warnbox">ยาวเกิน 5,080 มม. (ขีดจำกัดของหลายโปรแกรมอ่าน PDF) — ลดขนาดตัวอักษรลง</div>' : '<div class="warnbox">สำหรับไฟล์ PDF ที่ซูมอ่านหรือวาดทับบนแท็บเล็ต — พิมพ์ลงกระดาษมาตรฐานไม่ได้ ใช้ “ชุดลงเล่ม” สำหรับฉบับพิมพ์</div>'); return r; }
     if (r.one) { $('#expInfo').innerHTML = 'ผังทั้งหมดในหน้าเดียว · ตัวอักษรเล็กสุดบนกระดาษ ≈ <b>' + r.ovPt.toFixed(1) + ' pt</b><div class="warnbox">เหมาะกับไฟล์ PDF ที่ซูมอ่านได้ (เวกเตอร์คม) — ถ้าพิมพ์ลงกระดาษ ตัวหนังสือจะเล็กเกินอ่าน ใช้ “ชุดลงเล่ม” สำหรับฉบับพิมพ์</div>'; return r; }
     var bi = 'ทั้งหมด <b>' + r.total + ' หน้า</b>' + (r.N > 1 ? ' (ภาพรวม 1 + รายละเอียด ' + r.N + ')' : '') + ' · ตัวอักษรเล็กสุดเมื่อพิมพ์ ≈ <b>' + r.ptEff.toFixed(1) + ' pt</b>';
@@ -1056,7 +1235,7 @@ function renderExportDialog() {
   }
   $('#expInfo').innerHTML = info; return r;
 }
-function openExport() { persistNow(); renderExportDialog(); $('#dExp').showModal(); }
+function openExport() { persistNow(); expCropIds = Object.keys(msel).slice(); if (!expCropIds.length && sel && sel.k === 'p') expCropIds = [sel.id]; renderExportDialog(); $('#dExp').showModal(); }
 function doPng(r, o) {
   var k = r.s ? r.s / 25.4 * 300 : 2; k = Math.min(k, 9000 / Math.max(r.W, r.H));
   var url = URL.createObjectURL(new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml;charset=utf-8' })), img = new Image();
@@ -1147,6 +1326,7 @@ function init() {
   $('#zi').onclick = function () { zoomAt(0.8); }; $('#zo').onclick = function () { zoomAt(1.25); }; $('#zf').onclick = fit;
   $('#reltool').innerHTML = '<option value="">＋ เส้นความสัมพันธ์ / คู่ชีวิต / แฝด</option>' + linkOptions();
   $('#reltool').onchange = function () { var v = this.value; this.value = ''; if (!v) return; mode = { kind: 'link', type: v, from: null, keep: true }; sel = null; msel = {}; renderPanel(); draw(); };
+  if ($('#brkmode')) $('#brkmode').onclick = function () { brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกคนที่เป็นหัวแถวใหม่)' : '✂ ตั้งจุดตัดแถว'; };
   $('#selmode').onclick = function () { selMode = !selMode; this.classList.toggle('on', selMode); this.textContent = selMode ? '☑ เลือกหลายคน (เปิดอยู่)' : '☐ เลือกหลายคน'; };
   $('#addText').onclick = addTextBox;
   $('#tidy').onchange = function () { var v = this.value; this.value = ''; if (v) tidy(v); };
@@ -1162,7 +1342,7 @@ function init() {
   $('#bkBody').addEventListener('change', function (e) { if (e.target.id === 'bkFile') { var f = e.target.files[0]; if (!f) return; var r = new FileReader(); r.onload = function () { importText(r.result); }; r.readAsText(f); e.target.value = ''; } });
   $('#expOpts').addEventListener('change', function (e) { var k = e.target.getAttribute('data-eo'); if (!k) return; var o = expOpts(); o[k] = e.target.type === 'checkbox' ? e.target.checked : (e.target.type === 'number' ? Math.max(0, Math.min(40, +e.target.value || 0)) : e.target.value); touch(); renderExportDialog(); });
   $('#expOpts').addEventListener('click', function (e) {
-    var b = e.target.closest('[data-ex]'); if (!b) return; var o = expOpts(), a = b.getAttribute('data-ex'); if (a === 'canva') { doCanva(o); return; } if (o.mode === 'long') { bookAction(buildLong(o), a); return; } if (o.mode === 'book' || o.mode === 'one') { bookAction(buildBook(o), a); return; } var r = buildExport(o);
+    var b = e.target.closest('[data-ex]'); if (!b) return; var o = expOpts(), a = b.getAttribute('data-ex'); if (a === 'canva') { doCanva(o); return; } if (o.mode === 'long') { bookAction(buildLong(o), a); return; } if (o.mode === 'rep') { bookAction(buildReport(o), a); return; } if (o.mode === 'book' || o.mode === 'one') { bookAction(buildBook(o), a); return; } var r = buildExport(o);
     if (a === 'svg') { dl(fname('svg'), new Blob([r.build(r.W, r.H)], { type: 'image/svg+xml' })); toast('ดาวน์โหลด SVG แล้ว'); }
     else if (a === 'png') doPng(r, o); else if (a === 'pdf') doPrint(r, o);
   });
