@@ -540,12 +540,13 @@ function bindCanvas() {
     }
     if (e.button > 0) return;
     var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
-    if (brkMode) { /* place a row cut exactly where clicked (click near an existing cut line to remove it) */
-      var thr = 10 * view.w / (svg.clientWidth || 1000), cuts = state.cuts = state.cuts || [], hitI = -1;
-      cuts.forEach(function (cx, i) { if (Math.abs(cx - q.x) <= thr) hitI = i; });
-      var pidb = tg && tg.getAttribute('data-pid'), pb = pidb && ixOf()[pidb];
+    var onThing = tg && (tg.getAttribute('data-pid') || tg.getAttribute('data-lid') || tg.getAttribute('data-tid')); /* people / labels / text boxes keep their normal click-and-drag even while the cut mode is on */
+    var thr = 10 * view.w / (svg.clientWidth || 1000), hitI = -1;
+    (state.cuts || []).forEach(function (cx, i) { if (Math.abs(cx - q.x) <= thr) hitI = i; });
+    if (brkMode && (!onThing || hitI >= 0)) { /* place a row cut exactly where clicked (click near an existing cut line to remove it) */
+      var cuts = state.cuts = state.cuts || [];
       pushSnap();
-      if (hitI >= 0) cuts.splice(hitI, 1); else if (pb && pb.brk) delete pb.brk; else cuts.push(Math.round(q.x));
+      if (hitI >= 0) cuts.splice(hitI, 1); else cuts.push(Math.round(q.x));
       toast(hitI >= 0 ? 'ลบจุดตัดแล้ว (เหลือ ' + brkCount() + ' จุด)' : 'วางจุดตัดแล้ว (' + brkCount() + ' จุด)'); renderPanel(); draw(); save(); return;
     }
     if (mode) {
@@ -644,7 +645,7 @@ function bindCanvas() {
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select';
     if (document.querySelector('dialog[open]')) return;
-    if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
+    if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (brkMode && $('#brkmode')) { $('#brkmode').click(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing) { e.preventDefault(); redo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); toast('บันทึกในเครื่องแล้ว'); }
