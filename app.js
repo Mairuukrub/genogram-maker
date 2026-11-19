@@ -22,7 +22,7 @@ function fontCss() { return (window.GM_FONTS || []).map(function (f) { return "@
 /* ================= state ================= */
 var project = { families: [] }, fam = null, state = null;
 var undoMap = {}, redoMap = {}, undoS = [], redoS = [];
-var sel = null, msel = {}, mode = null, selMode = false, brkMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
+var sel = null, msel = {}, mode = null, selMode = false, brkMode = false, snipMode = false, view = { x: 0, y: 0, w: 1200, h: 700 };
 var svg, panel, ctr = 0;
 
 function newState() { return { v: 2, persons: [], unions: [], rels: [], homes: [], texts: [], cuts: [] }; }
@@ -173,9 +173,13 @@ function overlayBreaks() {
   cx0.forEach(function (x) { h += '<line x1="' + x + '" y1="' + y0 + '" x2="' + x + '" y2="' + y1 + '" stroke="#e8590c" stroke-width="2.5" stroke-dasharray="10 7" pointer-events="none"/><text x="' + (x + 6) + '" y="' + (y0 + 4) + '" font-size="16" font-weight="700" fill="#e8590c" pointer-events="none">▶ แถวใหม่</text>'; });
   svg.insertAdjacentHTML('beforeend', h);
 }
+function overlaySnip() {
+  var z = state.snip; if (!z) return;
+  svg.insertAdjacentHTML('beforeend', '<rect x="' + z.x + '" y="' + z.y + '" width="' + z.w + '" height="' + z.h + '" fill="rgba(37,99,235,.06)" stroke="#2563eb" stroke-width="3" stroke-dasharray="14 8" pointer-events="none"/><text x="' + (z.x + 8) + '" y="' + (z.y + 22) + '" font-size="18" font-weight="700" fill="#2563eb" pointer-events="none">▭ พื้นที่ส่งออก</text>');
+}
 function draw() {
   svg.innerHTML = GE.inner(state, ctxFor(fam, { sel: sel, msel: msel, mode: mode }));
-  overlayBreaks();
+  overlayBreaks(); overlaySnip();
   var e = $('#empty'); if (e) e.style.display = state.persons.length ? 'none' : 'flex';
 }
 function select(s) { sel = s; if (s) msel = {}; renderPanel(); draw(); }
@@ -540,6 +544,7 @@ function bindCanvas() {
     }
     if (e.button > 0) return;
     var tg = e.target.closest && e.target.closest('[data-pid],[data-uid],[data-rid],[data-hid],[data-bh],[data-lid],[data-tid]'), q = pt(e);
+    if (snipMode) { drag = { k: 'mq', c0: { x: e.clientX, y: e.clientY }, snip: true }; return; } /* snipping-tool style: drag a rectangle anywhere */
     var onThing = tg && (tg.getAttribute('data-pid') || tg.getAttribute('data-lid') || tg.getAttribute('data-tid')); /* people / labels / text boxes keep their normal click-and-drag even while the cut mode is on */
     var thr = 10 * view.w / (svg.clientWidth || 1000), hitI = -1;
     (state.cuts || []).forEach(function (cx, i) { if (Math.abs(cx - q.x) <= thr) hitI = i; });
@@ -623,7 +628,14 @@ function bindCanvas() {
   function hideMq() { var mq = $('#mq'); if (mq) mq.style.display = 'none'; }
   function end(e) {
     delete ptrs[e.pointerId]; if (Object.keys(ptrs).length < 2) pinch = null;
-    if (drag && drag.k === 'mq') {
+    if (drag && drag.k === 'mq' && drag.snip) {
+      hideMq();
+      if (drag.c1) {
+        var sa = pt({ clientX: drag.c0.x, clientY: drag.c0.y }), sb = pt({ clientX: drag.c1.x, clientY: drag.c1.y }), sw = Math.abs(sb.x - sa.x), sh = Math.abs(sb.y - sa.y);
+        if (sw > 40 && sh > 40) { pushSnap(); state.snip = { x: Math.round(Math.min(sa.x, sb.x)), y: Math.round(Math.min(sa.y, sb.y)), w: Math.round(sw), h: Math.round(sh) }; save(); toast('เลือกพื้นที่ส่งออกแล้ว (' + state.snip.w + '×' + state.snip.h + ') — กด “ส่งออก / พิมพ์” ได้เลย'); }
+      }
+      renderPanel(); draw();
+    } else if (drag && drag.k === 'mq') {
       hideMq();
       if (drag.c1) {
         var a = pt({ clientX: drag.c0.x, clientY: drag.c0.y }), b = pt({ clientX: drag.c1.x, clientY: drag.c1.y }), x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
@@ -645,7 +657,7 @@ function bindCanvas() {
   document.addEventListener('keydown', function (e) {
     var tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select';
     if (document.querySelector('dialog[open]')) return;
-    if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (brkMode && $('#brkmode')) { $('#brkmode').click(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
+    if (e.key === 'Escape') { if (mode) { mode = null; renderPanel(); draw(); } else if (brkMode && $('#brkmode')) { $('#brkmode').click(); } else if (snipMode && $('#snipmode')) { $('#snipmode').click(); } else if (sel || Object.keys(msel).length) { sel = null; msel = {}; renderPanel(); draw(); } }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !typing) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y' && !typing) { e.preventDefault(); redo(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); toast('บันทึกในเครื่องแล้ว'); }
@@ -714,7 +726,7 @@ function makeSample() {
 var PAPERS = { a4l: { n: 'A4 แนวนอน', w: 297, h: 210 }, a4p: { n: 'A4 แนวตั้ง', w: 210, h: 297 }, a3l: { n: 'A3 แนวนอน', w: 420, h: 297 }, a3p: { n: 'A3 แนวตั้ง', w: 297, h: 420 }, auto: { n: 'ตามขนาดผัง (ไม่กำหนดกระดาษ)', w: 0, h: 0 } };
 function expOpts() {
   var e = fam.exp = fam.exp || {};
-  var d = { title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true, mode: 'single', bookPt: 8, longPt: 6, condFill: !!fam.condFill, mono: !!fam.mono, unk: fam.unk !== false, unkBlank: !!fam.unkBlank };
+  var d = { snip: true, title: true, legendMode: e.legend === false ? 'none' : 'used', gen: fam.gen !== false, alias: true, paper: 'a4l', margin: 15, subtitle: true, mode: 'single', bookPt: 8, longPt: 6, condFill: !!fam.condFill, mono: !!fam.mono, unk: fam.unk !== false, unkBlank: !!fam.unkBlank };
   for (var k in d) if (e[k] === undefined) e[k] = d[k];
   return e;
 }
@@ -727,7 +739,12 @@ function measure(inner) {
 }
 /* people selected on the chart when the export dialog was opened → crop box (symbols + their labels) */
 var expCropIds = [];
+function snipIds(o) { /* people whose symbol lies inside the snipped rectangle */
+  var z = state.snip; if (!z || o.snip === false) return null;
+  return state.persons.filter(function (p) { return p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h; }).map(function (p) { return p.id; });
+}
 function cropBBox(o, ctx) {
+  if (state.snip && o.snip !== false) return { x: state.snip.x, y: state.snip.y, w: state.snip.w, h: state.snip.h };
   if (!o.crop || !expCropIds.length) return null;
   var set = {}; expCropIds.forEach(function (i) { set[i] = 1; });
   var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, PADC = 26;
@@ -902,8 +919,9 @@ function buildBook(o) {
 function buildReport(o) {
   var P = (PAPERS[o.paper] && PAPERS[o.paper].w) ? PAPERS[o.paper] : PAPERS.a4l, m = Math.max(5, +o.margin || 12), NP = (+o.repPages === 1) ? 1 : 2, TS = Math.max(1, Math.min(3, +o.repScale || 1.7));
   var saved = state, st2 = clone(state), cropped = false;
-  if (o.crop && expCropIds.length) { /* only the selected people (e.g. one family line): drop everyone else so the page is spent on them */
-    var keep = {}, kun = {}; expCropIds.forEach(function (i) { keep[i] = 1; });
+  var cids = snipIds(o) || ((o.crop && expCropIds.length) ? expCropIds : null);
+  if (cids && cids.length) { /* only the selected people (a family line or the snipped area): drop everyone else so the page is spent on them */
+    var keep = {}, kun = {}; cids.forEach(function (i) { keep[i] = 1; });
     st2.persons = st2.persons.filter(function (p) { return keep[p.id]; });
     st2.unions = st2.unions.filter(function (u) { var ok = u.a && keep[u.a] && (!u.b || keep[u.b]); if (ok) kun[u.id] = 1; return ok; });
     st2.persons.forEach(function (p) { if (p.from && !kun[p.from]) delete p.from; });
@@ -1216,7 +1234,7 @@ function fname(ext) { return (fam.title || 'genogram').replace(/[\\/:*?"<>|]+/g,
 function renderExportDialog() {
   var o = expOpts(), book = o.mode === 'book' || o.mode === 'one' || o.mode === 'long' || o.mode === 'rep', r = o.mode === 'long' ? buildLong(o) : (o.mode === 'rep' ? buildReport(o) : (book ? buildBook(o) : buildExport(o))), box = $('#expOpts');
   function ck(k, t) { return '<label class="ck"><input type="checkbox" data-eo="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + t + '</label>'; }
-  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + opt('rep', 'แบบเล่มรายงาน: เต็มที่ 1–2 หน้า (ข้อความใหญ่ พับแถวให้เต็มหน้า)', o.mode) + '</select></label>' + (o.mode === 'rep' ? '<label>จำนวนหน้า<select data-eo="repPages">' + opt('1', '1 หน้า', String(o.repPages || 2)) + opt('2', '2 หน้า', String(o.repPages || 2)) + '</select></label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repLean\"' + (o.repLean ? ' checked' : '') + '> ซ่อนบรรทัดรอง (การศึกษา/อาชีพ/บทบาท/ย้ายถิ่น/พฤติกรรม/หมายเหตุ) — เหมาะกับภาพรวม</label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repFit\"' + (o.repFit === false ? '' : ' checked') + '> ย่อเฉพาะป้ายที่ทับกันอัตโนมัติ</label><label>จำนวนแถวที่พับ<select data-eo=\"repRows\">' + opt('0', 'อัตโนมัติ (ให้ตัวใหญ่สุด)', String(o.repRows || 0)) + opt('1', '1 แถว (ไม่พับ)', String(o.repRows || 0)) + opt('2', '2 ชั้น', String(o.repRows || 0)) + opt('3', '3 ชั้น', String(o.repRows || 0)) + '</select></label><label>ขยายข้อความเทียบกับสัญลักษณ์ (เท่า)<input type="number" step="0.1" min="1" max="3" data-eo="repScale" value="' + (o.repScale || 1.7) + '"></label>' : '') + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') ? (expCropIds.length ? ck('crop', 'ตัดเอาเฉพาะส่วนที่เลือก (' + expCropIds.length + ' คน) — ส่วนอื่นของผังไม่ติดมา') : '<div class="note" style="margin:4px 0">อยากตัดเฉพาะบางส่วน: ปิดหน้าต่างนี้ → กด “เลือกหลายคน” แล้วลากกรอบรอบคนที่ต้องการ (หรือ Shift+คลิก) → เปิดส่งออกอีกครั้ง</div>') : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
+  box.innerHTML = '<div class="st">ตัวเลือก</div><label>รูปแบบ<select data-eo="mode">' + opt('single', 'หน้าเดียว (ย่อทั้งผัง)', o.mode) + opt('one', 'หน้าเดียว A4 (พับแถว ซูมใน PDF)', o.mode) + opt('long', 'แถวเดียวยาวต่อเนื่อง (หน้ากระดาษยาวพิเศษ — PDF เท่านั้น)', o.mode) + opt('book', 'ชุดลงเล่ม: ภาพรวม 1 หน้า + หน้ารายละเอียด (ตัวอ่านออก)', o.mode) + opt('rep', 'แบบเล่มรายงาน: เต็มที่ 1–2 หน้า (ข้อความใหญ่ พับแถวให้เต็มหน้า)', o.mode) + '</select></label>' + (o.mode === 'rep' ? '<label>จำนวนหน้า<select data-eo="repPages">' + opt('1', '1 หน้า', String(o.repPages || 2)) + opt('2', '2 หน้า', String(o.repPages || 2)) + '</select></label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repLean\"' + (o.repLean ? ' checked' : '') + '> ซ่อนบรรทัดรอง (การศึกษา/อาชีพ/บทบาท/ย้ายถิ่น/พฤติกรรม/หมายเหตุ) — เหมาะกับภาพรวม</label><label class=\"ck\"><input type=\"checkbox\" data-eo=\"repFit\"' + (o.repFit === false ? '' : ' checked') + '> ย่อเฉพาะป้ายที่ทับกันอัตโนมัติ</label><label>จำนวนแถวที่พับ<select data-eo=\"repRows\">' + opt('0', 'อัตโนมัติ (ให้ตัวใหญ่สุด)', String(o.repRows || 0)) + opt('1', '1 แถว (ไม่พับ)', String(o.repRows || 0)) + opt('2', '2 ชั้น', String(o.repRows || 0)) + opt('3', '3 ชั้น', String(o.repRows || 0)) + '</select></label><label>ขยายข้อความเทียบกับสัญลักษณ์ (เท่า)<input type="number" step="0.1" min="1" max="3" data-eo="repScale" value="' + (o.repScale || 1.7) + '"></label>' : '') + (o.mode === 'book' ? '<label>ขนาดตัวอักษรเล็กสุดที่ต้องการ (pt)<input type="number" step="0.5" min="5" max="14" data-eo="bookPt" value="' + o.bookPt + '"></label>' : '') + (o.mode === 'long' ? '<label>ขนาดตัวอักษรเล็กสุด (pt) — ยิ่งใหญ่ ยิ่งยาว<input type="number" step="0.5" min="3" max="14" data-eo="longPt" value="' + o.longPt + '"></label>' : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') && state.snip ? ck('snip', 'ส่งออกเฉพาะ<b>พื้นที่ที่ตัดไว้</b> (' + state.snip.w + '×' + state.snip.h + ') — เลือก “ตามขนาดผัง” ถ้าอยากได้ภาพขนาดเท่าพื้นที่นั้นพอดี') : '') + ((o.mode === 'single' || o.mode === 'long' || o.mode === 'rep') ? (expCropIds.length ? ck('crop', 'ตัดเอาเฉพาะส่วนที่เลือก (' + expCropIds.length + ' คน) — ส่วนอื่นของผังไม่ติดมา') : '<div class="note" style="margin:4px 0">อยากตัดเฉพาะบางส่วน: ปิดหน้าต่างนี้ → กด “เลือกหลายคน” แล้วลากกรอบรอบคนที่ต้องการ (หรือ Shift+คลิก) → เปิดส่งออกอีกครั้ง</div>') : '') + ck('title', 'หัวเรื่อง') + ck('subtitle', 'บ้านเลขที่ / ที่ตั้ง / วันที่ใต้หัวเรื่อง') + '<label>คำอธิบายสัญลักษณ์<select data-eo="legendMode">' + opt('none', 'ไม่แสดง', o.legendMode) + opt('used', 'เฉพาะที่ใช้ในผัง', o.legendMode) + opt('standard', 'ครบตามตารางของคู่มือ', o.legendMode) + '</select></label>' + ck('gen', 'ป้ายรุ่น I, II, III') + ck('alias', 'ใช้ “ตัวย่อ” แทนชื่อจริง (แนะนำสำหรับรายงาน)') + ck('unk', 'ชื่อ “ไม่ทราบ” ให้ขึ้นว่า “ไม่ทราบ” (ไม่ย่อเป็น ม.)') + ck('unkBlank', 'ช่องชื่อ/อายุที่ว่าง ให้ขึ้น “ไม่ทราบ”') + ck('mono', 'สัญลักษณ์ตามคู่มือ (เส้นดำ พื้นขาว วงบ้านดำเส้นบาง — ข้อความยังมีสีได้)') + ck('condFill', 'ระบายลายโรคในสัญลักษณ์ (ปิด = โรคเป็นตัวหนังสืออย่างเดียว)') +
     (o.alias && r.missingAlias ? '<div class="warnbox">มี ' + r.missingAlias + ' คนที่ยังไม่ตั้งตัวย่อ — ระบบใช้ตัวย่อที่สร้างอัตโนมัติจากชื่อให้ (ตรวจดูก่อนส่ง)</div>' : '') +
     (!o.alias ? '<div class="warnbox">กำลังจะแสดง<b>ชื่อจริง</b>ของชาวบ้านในรูป — ตรวจว่ารายงานอนุญาตหรือไม่</div>' : '') +
     '<label>ขนาดกระดาษ<select data-eo="paper">' + Object.keys(PAPERS).filter(function (k) { return !book || k !== 'auto'; }).map(function (k) { return opt(k, PAPERS[k].n, o.paper); }).join('') + '</select></label>' +
@@ -1348,7 +1366,9 @@ function init() {
   $('#zi').onclick = function () { zoomAt(0.8); }; $('#zo').onclick = function () { zoomAt(1.25); }; $('#zf').onclick = fit;
   $('#reltool').innerHTML = '<option value="">＋ เส้นความสัมพันธ์ / คู่ชีวิต / แฝด</option>' + linkOptions();
   $('#reltool').onchange = function () { var v = this.value; this.value = ''; if (!v) return; mode = { kind: 'link', type: v, from: null, keep: true }; sel = null; msel = {}; renderPanel(); draw(); };
-  if ($('#brkmode')) $('#brkmode').onclick = function () { brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกตรงไหนก็ตัดตรงนั้น / คลิกเส้นเพื่อลบ)' : '✂ ตั้งจุดตัดแถว'; };
+  if ($('#snipmode')) $('#snipmode').onclick = function () { snipMode = !snipMode; if (snipMode && brkMode && $('#brkmode')) $('#brkmode').click(); this.classList.toggle('on', snipMode); this.textContent = snipMode ? '▭ ตัดภาพส่งออก (เปิดอยู่ — ลากกรอบบนผังเพื่อเลือกพื้นที่)' : '▭ ตัดภาพส่งออก'; };
+  if ($('#snipclr')) $('#snipclr').onclick = function () { if (!state.snip) { toast('ยังไม่ได้เลือกพื้นที่'); return; } pushSnap(); delete state.snip; draw(); save(); toast('ล้างพื้นที่ที่ตัดไว้แล้ว'); };
+  if ($('#brkmode')) $('#brkmode').onclick = function () { if (!brkMode && snipMode && $('#snipmode')) $('#snipmode').click(); brkMode = !brkMode; this.classList.toggle('on', brkMode); this.textContent = brkMode ? '✂ ตั้งจุดตัดแถว (เปิดอยู่ — คลิกตรงไหนก็ตัดตรงนั้น / คลิกเส้นเพื่อลบ)' : '✂ ตั้งจุดตัดแถว'; };
   if ($('#brkclr')) $('#brkclr').onclick = function () { if (!brkCount()) { toast('ยังไม่มีจุดตัด'); return; } pushSnap(); state.persons.forEach(function (q) { delete q.brk; }); state.cuts = []; renderPanel(); draw(); save(); toast('ล้างจุดตัดทั้งหมดแล้ว'); };
   $('#selmode').onclick = function () { selMode = !selMode; this.classList.toggle('on', selMode); this.textContent = selMode ? '☑ เลือกหลายคน (เปิดอยู่)' : '☐ เลือกหลายคน'; };
   $('#addText').onclick = addTextBox;
