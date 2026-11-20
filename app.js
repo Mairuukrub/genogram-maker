@@ -1245,8 +1245,8 @@ function buildBook(o) {
   var font = GE.FONT.replace(/"/g, "'");
   function wrap(inner, wA, hA, withFont) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + P.w + ' ' + P.h + '" width="' + wA + '" height="' + hA + '" font-family="' + font + '">' + (withFont ? '<style>' + fontCss() + '</style>' : '') + '<rect width="' + P.w + '" height="' + P.h + '" fill="#fff"/>' + inner + '</svg>'; }
   function head(pg, tot, sub) {
-    return '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>' +
-      (sub ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') +
+    return (o.title === false ? '' : '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>') +
+      (sub && o.title !== false && o.subtitle !== false ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') +
       '<text x="' + (P.w - m) + '" y="' + (m + 5) + '" text-anchor="end" font-size="3.6" fill="#4a5d80">หน้า ' + pg + ' / ' + tot + '</text>';
   }
   var sub = [fam.house ? 'บ้านเลขที่ ' + fam.house : '', fam.place || '', fam.date ? 'ข้อมูล ณ วันที่ ' + thaiDate(fam.date) : ''].filter(Boolean).join('   ·   ');
@@ -1470,7 +1470,7 @@ function buildLong(o) {
   var base = { alias: o.alias, condFill: o.condFill, mono: o.mono, unk: o.unk, unkBlank: o.unkBlank, nosel: true };
   var ctxO = ctxFor(fam, Object.assign({ gen: o.gen !== false, pre: 'x_' }, base));
   var cO = GE.inner(state, ctxO), bo = measure(cO), PAD = 20, title = fam.title || 'ผังเครือญาติ', cbL = cropBBox(o, ctxO); if (cbL) bo = cbL;
-  var HDR = 11, FTR = 7;
+  var showTitle = o.title !== false, HDR = showTitle ? 11 : 3, FTR = 7; /* long mode used to ignore the "หัวเรื่อง" / subtitle tick boxes */
   var items = (o.legendMode === 'none') ? [] : GE.legendItems(state, ctxO, o.legendMode || 'used');
   var capL = Math.min(bo.w, 1400), lx = 0, ly = 0, RH = 46, rowsPos = [];
   items.forEach(function (it) { var w = 66 + 8 + Math.min(300, it.label.length * 7.4) + 22; if (lx > 0 && lx + w > capL) { lx = 0; ly += RH; } rowsPos.push([lx, ly, it]); lx += w; });
@@ -1478,7 +1478,7 @@ function buildLong(o) {
   var W = Math.round(bo.w * s + 2 * m + 2 * PAD * s), H = Math.round(HDR + bo.h * s + legH + FTR + 2 * m + 4);
   var P = { w: W, h: H, n: 'ยาวพิเศษ' }, font = GE.FONT.replace(/"/g, "'");
   var sub = [fam.house ? 'บ้านเลขที่ ' + fam.house : '', fam.place || '', fam.date ? 'ข้อมูล ณ วันที่ ' + thaiDate(fam.date) : ''].filter(Boolean).join('   ·   ');
-  var inner = '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>' + (sub ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') +
+  var inner = (showTitle ? '<text x="' + m + '" y="' + (m + 5) + '" font-size="5" font-weight="600" fill="#1f2a44">' + esc(title) + '</text>' + (sub && o.subtitle !== false ? '<text x="' + m + '" y="' + (m + 9.4) + '" font-size="3" fill="#4a5d80">' + esc(sub) + '</text>' : '') : '') +
     '<g transform="translate(' + (m + PAD * s - bo.x * s).toFixed(3) + ',' + (m + HDR - bo.y * s).toFixed(3) + ') scale(' + s.toFixed(5) + ')">' + clipTo(cbL, cO, 'x_cropl') + '</g>';
   if (items.length) {
     var gy = m + HDR + bo.h * s + 6;
