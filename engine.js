@@ -4,6 +4,8 @@
 var H = 18, INK = '#234e8c', REL = '#8e3a8a', ACC = '#ff7a00', MONO = false;
 var FILLS = ['#ffffff', '#e6c8ff', '#bfeeff', '#ffd9ee', '#c8f7c0', '#ffd2a0'];
 var FILL_NAMES = ['ไม่มีสี', 'ม่วง', 'ฟ้า', 'ชมพู', 'เขียว', 'ส้ม'];
+var HL_COLORS = ['#fff176', '#ffcc80', '#ffab91', '#f48fb1', '#ce93d8', '#b39ddb', '#90caf9', '#80deea', '#a5d6a7', '#c5e1a5', '#bcaaa4', '#80cbc4'];
+var DIMC = '#bdbdbd', HEX = /^#[0-9a-f]{6}$/i;
 var FONT = "Sarabun,'Noto Sans Thai',Tahoma,sans-serif";
 var RELS = { close: 'สนิทกัน', vclose: 'สนิทกันมากเป็นพิเศษ', conflict: 'ทะเลาะหรือขัดแย้ง', distant: 'ห่างเหินกัน', control: 'ควบคุมหรือมีอำนาจเหนือกว่า (ลูกศรชี้ไปคนที่ 2)', violence: 'ใช้ความรุนแรง (ลูกศรชี้ไปคนที่ 2)', lovehate: 'ทั้งรักทั้งเกลียด' };
 var UT = { married: 'แต่งงาน', cohab: 'อยู่ด้วยกัน', divorced: 'หย่าร้างหรือแยกกันอยู่' };
@@ -35,6 +37,7 @@ var TEXT_KINDS = [
   { k: 'cond', n: 'โรค', c: '#e11d1d' }, { k: 'risk', n: 'พฤติกรรมเสี่ยง', c: '#8b5a2b' }, { k: 'cod', n: 'สาเหตุการเสียชีวิต', c: '#1f8a3a' }, { k: 'note', n: 'หมายเหตุ', c: '#4a5d80' }
 ];
 function textColor(kind, o, p) {
+  if (p && p.dim) return '#a8a8a8';
   if (p && p.lc) return p.lc;
   var d = '#4a5d80'; TEXT_KINDS.forEach(function (t) { if (t.k === kind) d = t.c; });
   if (o && o.typed) return (o.tcol && o.tcol[kind]) || d;
@@ -53,7 +56,7 @@ function condMapFor(fam) {
 function $esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function ixOf(st) { var m = {}; st.persons.forEach(function (p) { m[p.id] = p; }); return m; }
 function isSmall(p) { return p.st === 'sa' || p.st === 'ab'; }
-function half(p) { return p.sex === 'U' && !isSmall(p) && p.st !== 'pg' ? 22 : H; }
+function half(p) { return (p.sex === 'U' && !isSmall(p) && p.st !== 'pg' ? 22 : H) * (p.sz || 1); } /* p.sz = bigger symbol for print */
 function top(p) { return isSmall(p) ? p.y - 26 : p.y - half(p); }
 function bot(p) { return isSmall(p) ? p.y + 11 : (p.st === 'pg' ? p.y + H * 0.8 : p.y + half(p)); }
 function sid(id) { return String(id).replace(/[^A-Za-z0-9_-]/g, '_'); }
@@ -98,8 +101,9 @@ function textLines(p, o) {
   if (ag && nm === 'ไม่ทราบ' && /^ไม่ทราบ(อายุ)?$/.test(ag)) ag = ''; /* name and age both unknown: say it once */
   if (ag) out.push([ag, 'age']);
   if (p.edu) out.push([p.edu, 'edu']);
-  if (p.occ) out.push([p.occ, 'occ']);
-  if (p.role) out.push([p.role, 'role']);
+  function multi(v, k) { String(v).split('\n').forEach(function (t) { if (t.trim()) out.push([t.trim(), k]); }); } /* long text can be wrapped with line breaks */
+  if (p.occ) multi(p.occ, 'occ');
+  if (p.role) multi(p.role, 'role');
   if (p.mig) out.push([p.mig, 'mig']);
   if (dzList(p).length && (!o || o.condText !== false)) dzList(p).forEach(function (t) { out.push([t, 'cond']); });
   if (cs.length && (!o || o.condText !== false)) {
@@ -108,7 +112,7 @@ function textLines(p, o) {
     if (rk.length) out.push([rk.map(function (k) { return cm[k].t; }).join(' · '), 'risk']);
   }
   if (p.risk) out.push([p.risk, 'risk']);
-  if (p.dead && p.cod) out.push(['สาเหตุ ' + p.cod, 'cod']);
+  if (p.dead && p.cod) multi('สาเหตุ ' + p.cod, 'cod');
   if (p.note && (!o || o.showNote !== false)) String(p.note).split('\n').forEach(function (t) { if (t.trim()) out.push([t.trim(), 'note']); });
   return out;
 }
@@ -143,7 +147,13 @@ function geomEl(p, attrs) {
   return '<polygon points="' + x + ',' + (y - h) + ' ' + (x + h) + ',' + y + ' ' + x + ',' + (y + h) + ' ' + (x - h) + ',' + y + '" ' + attrs + '/>';
 }
 function shape(p, o) {
-  var x = p.x, y = p.y, f = MONO ? (p.key ? '#e6e6e6' : '#fff') : (p.key ? KEYFILL : FILLS[p.c || 0]), s = '', st = p.st || '', pre = (o && o.pre) || '';
+  if (!p.dim) return shapeInk(p, o);
+  var keep = INK; INK = DIMC;
+  var s = shapeInk(p, o); INK = keep; return s;
+}
+function shapeInk(p, o) {
+  /* p.hl = this person's own highlight colour; it wins in both colour and black-and-white charts. p.dim = faded person */
+  var x = p.x, y = p.y, f = p.dim ? '#fff' : HEX.test(p.hl || '') ? p.hl : MONO ? (p.key ? '#e6e6e6' : '#fff') : (p.key ? KEYFILL : FILLS[p.c || 0]), s = '', st = p.st || '', pre = (o && o.pre) || '';
   if (st === 'sa') return L(x, y - 26, x, y - 10, INK, 3.4) + '<circle cx="' + x + '" cy="' + y + '" r="11" fill="' + INK + '" stroke="' + INK + '" stroke-width="1.8"/>';
   if (st === 'ab') return L(x, y - 26, x, y - 11, INK, 3.4) + '<circle cx="' + x + '" cy="' + y + '" r="11" fill="#fff" stroke="' + INK + '" stroke-width="1.8"/>' + L(x - 11, y, x + 11, y, INK, 1.8) + L(x, y - 11, x, y + 11, INK, 1.8);
   var h = half(p), stroke = 'stroke="' + INK + '" stroke-width="1.8" stroke-linejoin="round"';
@@ -574,7 +584,7 @@ function inner(st, o) {
     if (l.t) { var tx = P.reduce(function (a, q) { return a + q[0]; }, 0) / P.length, ty = Math.min.apply(null, P.map(function (q) { return q[1]; })) - 8; labs.push('<text x="' + tx.toFixed(1) + '" y="' + ty.toFixed(1) + '" text-anchor="middle" font-size="13" font-weight="600" fill="' + col + '" paint-order="stroke" stroke="#fff" stroke-width="3" pointer-events="none">' + $esc(l.t) + '</text>'); }
   });
 
-  st.unions.forEach(function (u) {
+  function drawUnion(u) {
     var g = ugeo(u, m); if (!g) return;
     var on = sel_ && sel_.k === 'u' && sel_.id === u.id;
     if (g.b) {
@@ -619,6 +629,13 @@ function inner(st, o) {
     lines.push(L(g.mx, g.ly, g.mx, by) + (bx1 > bx0 ? L(bx0, by, bx1, by) : '') + bar);
     if (!g.b && !o.nosel) hit.push('<line data-uid="' + u.id + '" x1="' + g.mx + '" y1="' + g.ly + '" x2="' + g.mx + '" y2="' + by + '" stroke="#000" stroke-opacity="0" stroke-width="14" pointer-events="stroke" style="cursor:pointer"/>');
     if (on && !g.b) back.push('<line x1="' + g.mx + '" y1="' + g.ly + '" x2="' + g.mx + '" y2="' + by + '" stroke="' + ACC + '" stroke-opacity=".4" stroke-width="10"/>');
+  }
+  st.unions.forEach(function (u) {
+    var keep = INK, n = lines.length;
+    if (u.dim) INK = DIMC;
+    drawUnion(u);
+    INK = keep;
+    if (u.dim) Array.prototype.unshift.apply(lines, lines.splice(n)); /* faded lines go underneath so shared segments stay solid */
   });
 
   st.rels.forEach(function (r) { rels.push(relSvg(r, m, sel_ && sel_.k === 'r' && sel_.id === r.id, o)); });
@@ -718,7 +735,7 @@ function legendHTML(st, o) {
 }
 
 G.GE = {
-  H: H, INK: INK, ACC: ACC, FONT: FONT, FILLS: FILLS, FILL_NAMES: FILL_NAMES, RELS: RELS, UT: UT, STS: STS, SEX: SEX, ROMAN: ROMAN,
+  H: H, INK: INK, ACC: ACC, FONT: FONT, FILLS: FILLS, FILL_NAMES: FILL_NAMES, HL_COLORS: HL_COLORS, RELS: RELS, UT: UT, STS: STS, SEX: SEX, ROMAN: ROMAN,
   COND_PRESETS: COND_PRESETS, condMapFor: condMapFor, ixOf: ixOf, isSmall: isSmall, half: half, top: top, bot: bot,
   inner: inner, ugeo: ugeo, bounds: bounds, relGeom: relGeom, autoBend: autoBend, gens: gens, genLabels: genLabels, kidsOf: kidsOf,
   relToFrame: relToFrame, relFromFrame: relFromFrame, loopPts: loopPts, loopD: loopD, pointIn: pointIn, autoAlias: autoAlias, TEXT_KINDS: TEXT_KINDS, textColor: textColor, KEYFILL: KEYFILL, LEGEND_TITLE: LEGEND_TITLE, dispName: dispName, ageText: ageText, legendItems: legendItems, legendHTML: legendHTML, autoLabels: autoLabels, lineSegs: lineSegs, personBoxes: personBoxes, partnersOf: function (st) { return st.unions.filter(function (u) { return u.a && u.b; }).map(function (u) { return [u.a, u.b]; }); }, isUnk: isUnk, dzList: dzList, homeOutsiders: homeOutsiders, esc: $esc

@@ -725,6 +725,10 @@ function renderPanel() {
       '<div class="sec"><label>หมายเหตุ<textarea data-f="note" rows="2" placeholder="ข้อความเพิ่มเติมใต้ชื่อ">' + esc(p.note || '') + '</textarea></label>' +
       '<div class="sw">' + GE.FILLS.map(function (c, i) { return '<button class="swb' + ((p.c || 0) === i ? ' on' : '') + '" data-act="color" data-v="' + i + '" title="' + GE.FILL_NAMES[i] + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
       '<label>ตำแหน่งชื่อ<select data-f="lp">' + opt('', 'อัตโนมัติ', p.lp || '') + opt('b', 'ใต้สัญลักษณ์', p.lp) + opt('t', 'เหนือสัญลักษณ์', p.lp) + opt('l', 'ซ้าย', p.lp) + opt('r', 'ขวา', p.lp) + '</select></label></div>' +
+      '<div class="sec"><div class="st">สีเน้นคนสำคัญ</div><p class="mut" style="font-size:12px;margin-bottom:6px">ใช้ได้แม้เปิดโหมดขาวดำ · คนเดียวกันในผังย่อยอื่นให้ใช้สีเดิม</p>' +
+      '<div class="sw">' + GE.HL_COLORS.map(function (c) { return '<button class="swb' + (p.hl === c ? ' on' : '') + '" data-act="hl" data-v="' + c + '" title="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
+      '<div class="btns"><button data-act="hlclear"' + (p.hl ? '' : ' disabled') + '>ล้างสีเน้น</button></div>' +
+      '<div class="chk"><label><input type="checkbox" data-f="dim"' + (p.dim ? ' checked' : '') + '> ทำให้คนนี้จาง (เช่น คู่สมรสคนก่อน)</label></div></div>' +
       '<div class="sec"><div class="st">ข้อความของคนนี้</div><p class="mut" style="font-size:12px;margin-bottom:6px">ลากข้อความบนผังเพื่อย้ายได้เลย</p>' +
       '<div class="two"><label>ขนาด<select data-f="ls">' + opt('', 'ปกติ', p.ls || '') + opt('0.8', 'เล็ก', p.ls) + opt('1.25', 'ใหญ่', p.ls) + opt('1.5', 'ใหญ่มาก', p.ls) + '</select></label><label>สี<input type="color" data-f="lc" value="' + (p.lc || '#234e8c') + '" style="height:32px;padding:2px"></label></div>' +
       '<div class="sw tsw">' + TCOLS.map(function (c) { return '<button class="swb" data-act="lcol" data-v="' + c + '" style="background:' + c + '"></button>'; }).join('') + '</div>' +
@@ -751,6 +755,7 @@ function renderPanel() {
     var u = s;
     h += '<div class="sec"><div class="st">เส้นคู่ชีวิต</div><label>ประเภท<select data-f="t">' + Object.keys(GE.UT).map(function (k) { return opt(k, GE.UT[k], u.t); }).join('') + '</select></label>' +
       '<label>ความลึกของเส้น<input type="range" data-f="dp" min="0" max="70" value="' + (u.dp || 0) + '"></label>' +
+      '<div class="chk"><label><input type="checkbox" data-f="dim"' + (u.dim ? ' checked' : '') + '> ทำเส้นนี้ให้จาง</label></div>' +
       '<div class="btns"><button data-act="uchild" data-v="M">+ ลูกชาย</button><button data-act="uchild" data-v="F">+ ลูกหญิง</button></div></div>' +
       kidsSec(u) +
       '<div class="sec"><button class="dng" data-act="del">ลบเส้นคู่ชีวิตนี้</button></div>';
@@ -833,6 +838,8 @@ function onAct(e) {
   else if (act === 'selu') { sel = { k: 'u', id: v }; msel = {}; }
   else if (act === 'selp') { sel = { k: 'p', id: v }; msel = {}; }
   else if (act === 'color' && s) { pushSnap(); s.c = +v; }
+  else if (act === 'hl' && s) { pushSnap(); s.hl = v; }
+  else if (act === 'hlclear' && s) { pushSnap(); delete s.hl; }
   else if (act === 'cond' && s) { pushSnap(); var a = s.cond || []; var i = a.indexOf(v); if (i >= 0) a.splice(i, 1); else a.push(v); if (a.length) s.cond = a; else delete s.cond; }
   else if (act === 'addtext') { addTextBox(); return; }
   else if (act === 'lcol' && s) { pushSnap(); if (sel.k === 't') s.c = v; else s.lc = v; }
